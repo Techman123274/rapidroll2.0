@@ -19,15 +19,18 @@ const MONGODB_URI_FALLBACK = process.env.MONGODB_URI_FALLBACK || 'mongodb://127.
 const DB_RETRY_MS = Number(process.env.DB_RETRY_MS || 10000);
 const USE_MONGODB_FALLBACK = process.env.USE_MONGODB_FALLBACK === 'true' || NODE_ENV !== 'production';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_insecure_secret_change_me';
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || (NODE_ENV === 'production' ? '' : 'http://localhost:5173');
 const CLIENT_ORIGINS = (process.env.CLIENT_ORIGINS || '')
   .split(',')
   .map((entry) => entry.trim())
   .filter(Boolean);
+const DEFAULT_LOCAL_ORIGINS =
+  NODE_ENV === 'production'
+    ? []
+    : ['http://localhost:5173', 'http://127.0.0.1:5173'];
 const allowedOrigins = new Set([
-  CLIENT_ORIGIN,
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
+  ...(CLIENT_ORIGIN ? [CLIENT_ORIGIN] : []),
+  ...DEFAULT_LOCAL_ORIGINS,
   ...CLIENT_ORIGINS
 ]);
 const ALLOW_LAN_ORIGINS = process.env.ALLOW_LAN_ORIGINS !== 'false';
@@ -673,7 +676,7 @@ const processAutoCashouts = async () => {
               totalWon: payout
             }
           },
-          { session, new: true }
+          { session, returnDocument: 'after' }
         );
         if (!updated) return;
 
@@ -918,70 +921,70 @@ async function seedDefaults() {
     { slug: 'towers-x', title: 'Towers X', enabled: true }
   ];
   for (const game of requiredGames) {
-    await Game.findOneAndUpdate({ slug: game.slug }, game, { upsert: true, new: true, setDefaultsOnInsert: true });
+    await Game.findOneAndUpdate({ slug: game.slug }, game, { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true });
   }
 
   await Setting.findOneAndUpdate(
     { key: 'site_online' },
     { key: 'site_online', value: true },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   await Setting.findOneAndUpdate(
     { key: 'dice_nonce_global' },
     { key: 'dice_nonce_global', value: 0 },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   const diceSeed = crypto.randomBytes(32).toString('hex');
   await Setting.findOneAndUpdate(
     { key: 'dice_server_seed' },
     { key: 'dice_server_seed', value: diceSeed },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   await Setting.findOneAndUpdate(
     { key: 'roulette_nonce_global' },
     { key: 'roulette_nonce_global', value: 0 },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   const rouletteSeed = crypto.randomBytes(32).toString('hex');
   await Setting.findOneAndUpdate(
     { key: 'roulette_server_seed' },
     { key: 'roulette_server_seed', value: rouletteSeed },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 
   await Setting.findOneAndUpdate(
     { key: 'limbo_nonce_global' },
     { key: 'limbo_nonce_global', value: 0 },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
   await Setting.findOneAndUpdate(
     { key: 'plinko_nonce_global' },
     { key: 'plinko_nonce_global', value: 0 },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
   await Setting.findOneAndUpdate(
     { key: 'towers_nonce_global' },
     { key: 'towers_nonce_global', value: 0 },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
   await Setting.findOneAndUpdate(
     { key: 'limbo_server_seed' },
     { key: 'limbo_server_seed', value: crypto.randomBytes(32).toString('hex') },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
   await Setting.findOneAndUpdate(
     { key: 'plinko_server_seed' },
     { key: 'plinko_server_seed', value: crypto.randomBytes(32).toString('hex') },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
   await Setting.findOneAndUpdate(
     { key: 'towers_server_seed' },
     { key: 'towers_server_seed', value: crypto.randomBytes(32).toString('hex') },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
   );
 }
 
@@ -1513,7 +1516,7 @@ app.patch('/api/platform/site-online', authRequired, requireRole('owner'), async
   const setting = await Setting.findOneAndUpdate(
     { key: 'site_online' },
     { key: 'site_online', value },
-    { upsert: true, new: true }
+    { upsert: true, returnDocument: 'after' }
   );
   await audit({
     action: 'site.online.toggle',
@@ -1530,7 +1533,7 @@ app.patch('/api/games/:slug/enabled', authRequired, requireRole('owner'), async 
   const game = await Game.findOneAndUpdate(
     { slug: req.params.slug },
     { enabled },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!game) {
@@ -1658,7 +1661,7 @@ app.post('/api/crash/bet', authRequired, async (req, res) => {
             totalWagered: betAmount
           }
         },
-        { new: true, session }
+        { returnDocument: 'after', session }
       );
 
       if (!updatedUser) {
@@ -1745,7 +1748,7 @@ app.post('/api/crash/cancel', authRequired, async (req, res) => {
       updatedUser = await User.findOneAndUpdate(
         { _id: req.user._id },
         { $inc: { balance: targetBet.betAmount, totalWagered: -targetBet.betAmount } },
-        { new: true, session }
+        { returnDocument: 'after', session }
       );
 
       const balanceAfter = Number(updatedUser.balance || 0);
@@ -1816,7 +1819,7 @@ app.post('/api/crash/cashout', authRequired, async (req, res) => {
             totalWon: payout
           }
         },
-        { new: true, session }
+        { returnDocument: 'after', session }
       );
       bet.cashoutAt = cashoutAt;
       bet.payout = payout;
@@ -1906,7 +1909,7 @@ const getNextDiceNonce = async () => {
   const setting = await Setting.findOneAndUpdate(
     { key: 'dice_nonce_global' },
     { $inc: { value: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
   return Number(setting.value || 1);
 };
@@ -1915,7 +1918,7 @@ const getNextGenericNonce = async (key) => {
   const setting = await Setting.findOneAndUpdate(
     { key },
     { $inc: { value: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
   return Number(setting.value || 1);
 };
@@ -1927,7 +1930,7 @@ const getCurrentGenericSeed = async (key) => {
   await Setting.findOneAndUpdate(
     { key },
     { key, value: seed },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
   return seed;
 };
@@ -1937,7 +1940,7 @@ const rotateGenericSeed = async (key) => {
   await Setting.findOneAndUpdate(
     { key },
     { key, value: seed },
-    { new: true, upsert: true }
+    { returnDocument: 'after', upsert: true }
   );
 };
 
@@ -1948,7 +1951,7 @@ const getCurrentDiceSeed = async () => {
   await Setting.findOneAndUpdate(
     { key: 'dice_server_seed' },
     { key: 'dice_server_seed', value: seed },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
   return seed;
 };
@@ -1958,7 +1961,7 @@ const rotateDiceSeed = async () => {
   await Setting.findOneAndUpdate(
     { key: 'dice_server_seed' },
     { key: 'dice_server_seed', value: seed },
-    { new: true, upsert: true }
+    { returnDocument: 'after', upsert: true }
   );
 };
 
@@ -2139,7 +2142,7 @@ const getNextRouletteNonce = async () => {
   const setting = await Setting.findOneAndUpdate(
     { key: 'roulette_nonce_global' },
     { $inc: { value: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
   return Number(setting.value || 1);
 };
@@ -2151,7 +2154,7 @@ const getCurrentRouletteSeed = async () => {
   await Setting.findOneAndUpdate(
     { key: 'roulette_server_seed' },
     { key: 'roulette_server_seed', value: seed },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
   );
   return seed;
 };
@@ -2161,7 +2164,7 @@ const rotateRouletteSeed = async () => {
   await Setting.findOneAndUpdate(
     { key: 'roulette_server_seed' },
     { key: 'roulette_server_seed', value: seed },
-    { new: true, upsert: true }
+    { returnDocument: 'after', upsert: true }
   );
 };
 
@@ -2745,7 +2748,7 @@ app.post('/api/fairness/rotate-seed', authRequired, async (req, res) => {
   await Setting.findOneAndUpdate(
     { key: settingKey },
     { key: settingKey, value: nextSeed },
-    { new: true, upsert: true }
+    { returnDocument: 'after', upsert: true }
   );
 
   if (previous?.value) {
@@ -2906,7 +2909,7 @@ async function initializeServices() {
 
 async function start() {
   app.listen(PORT, () => {
-    console.log(`API server running on http://localhost:${PORT}`);
+    console.log(`API server listening on port ${PORT}`);
   });
   await initializeServices();
 }
