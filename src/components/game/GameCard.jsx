@@ -1,16 +1,31 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Card from '../ui/Card';
 
 const slugify = (value) => value.toLowerCase().replace(/\s+/g, '-');
 
 function GameCard({ title, image, tag = 'Popular', disabled = false, minimal = false }) {
+  const localFallback = useMemo(() => `/games/${slugify(title)}.svg`, [title]);
+  const [resolvedImage, setResolvedImage] = useState(image || localFallback);
+
+  useEffect(() => {
+    setResolvedImage(image || localFallback);
+  }, [image, localFallback]);
+
+  const handleImageError = () => {
+    setResolvedImage((prev) => {
+      if (prev !== localFallback) return localFallback;
+      return '';
+    });
+  };
+
   if (minimal) {
     return (
       <Card className={`game-card game-card-minimal ${disabled ? 'game-card-disabled' : ''}`}>
         {disabled ? (
           <>
-            {image ? (
-              <img className="media-image game-media-large" src={image} alt={title} loading="lazy" />
+            {resolvedImage ? (
+              <img className="media-image game-media-large" src={resolvedImage} alt={title} loading="lazy" onError={handleImageError} />
             ) : (
               <div className="media-placeholder game-media-large">Game Image</div>
             )}
@@ -23,8 +38,8 @@ function GameCard({ title, image, tag = 'Popular', disabled = false, minimal = f
           </>
         ) : (
           <Link to={`/games/${slugify(title)}`} className="game-card-launch" aria-label={`Launch ${title}`}>
-            {image ? (
-              <img className="media-image game-media-large" src={image} alt={title} loading="lazy" />
+            {resolvedImage ? (
+              <img className="media-image game-media-large" src={resolvedImage} alt={title} loading="lazy" onError={handleImageError} />
             ) : (
               <div className="media-placeholder game-media-large">Game Image</div>
             )}
@@ -40,8 +55,8 @@ function GameCard({ title, image, tag = 'Popular', disabled = false, minimal = f
   return (
     <Card className={`game-card ${disabled ? 'game-card-disabled' : ''}`}>
       {/* GAME MEDIA */}
-      {image ? (
-        <img className="media-image" src={image} alt={title} loading="lazy" />
+      {resolvedImage ? (
+        <img className="media-image" src={resolvedImage} alt={title} loading="lazy" onError={handleImageError} />
       ) : (
         <div className="media-placeholder">Game Image</div>
       )}

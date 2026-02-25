@@ -1,10 +1,8 @@
 import { NavLink } from 'react-router-dom';
 import { useState } from 'react';
-import { useAuth } from '../../context/AuthContext';
 import GlobalChat from './GlobalChat';
 
 function MobileDock() {
-  const { user } = useAuth();
   const [showChat, setShowChat] = useState(false);
 
   return (
@@ -13,18 +11,15 @@ function MobileDock() {
         <NavLink to="/" className="mobile-dock-link">
           Home
         </NavLink>
-        <NavLink to="/games" className="mobile-dock-link">
-          Games
+        <NavLink to="/originals" className="mobile-dock-link">
+          Originals
         </NavLink>
-        {user ? (
-          <NavLink to="/wallet" className="mobile-dock-link">
-            Wallet
-          </NavLink>
-        ) : (
-          <NavLink to="/login" className="mobile-dock-link">
-            Login
-          </NavLink>
-        )}
+        <NavLink to="/slots" className="mobile-dock-link">
+          Slots
+        </NavLink>
+        <NavLink to="/table-games" className="mobile-dock-link">
+          Table
+        </NavLink>
         <button type="button" className="mobile-dock-link mobile-chat-toggle" onClick={() => setShowChat((prev) => !prev)}>
           Chat
         </button>

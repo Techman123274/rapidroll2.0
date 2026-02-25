@@ -15,8 +15,14 @@ function Sidebar() {
         <NavLink to="/" className="sidebar-link">
           Home
         </NavLink>
-        <NavLink to="/games" className="sidebar-link">
-          Games
+        <NavLink to="/originals" className="sidebar-link">
+          Originals
+        </NavLink>
+        <NavLink to="/slots" className="sidebar-link">
+          Slots
+        </NavLink>
+        <NavLink to="/table-games" className="sidebar-link">
+          Table Games
         </NavLink>
         <NavLink to="/promotions" className="sidebar-link">
           Promotions

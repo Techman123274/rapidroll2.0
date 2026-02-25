@@ -29,6 +29,9 @@ export function SoundProvider({ children }) {
 
   const cacheRef = useRef(new Map());
   const cooldownRef = useRef(new Map());
+  const failedSrcRef = useRef(new Set());
+  const loggedMissingRef = useRef(new Set());
+  const audioContextRef = useRef(null);
 
   useEffect(() => {
     localStorage.setItem(SOUND_PREF_KEY, JSON.stringify(prefs));
@@ -55,6 +58,54 @@ export function SoundProvider({ children }) {
     setPrefs((prev) => ({ ...prev, muted: !prev.muted }));
   }, []);
 
+  const ensureCtx = useCallback(() => {
+    if (audioContextRef.current) return audioContextRef.current;
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return null;
+    audioContextRef.current = new AudioCtx();
+    return audioContextRef.current;
+  }, []);
+
+  const synthFallback = useCallback(
+    (key, volume = 1) => {
+      const ctx = ensureCtx();
+      if (!ctx) return;
+      if (ctx.state === 'suspended') {
+        void ctx.resume();
+      }
+
+      const scaled = clamp(volume) * prefs.masterVolume * prefs.sfxVolume;
+      const tone = (frequency, duration, type = 'sine', gainValue = 0.08, delay = 0) => {
+        const start = ctx.currentTime + delay;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(frequency, start);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, scaled * gainValue), start + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + duration + 0.02);
+      };
+
+      if (String(key).includes('win') || String(key).includes('cashout')) {
+        tone(420, 0.08, 'sine', 0.12);
+        tone(640, 0.1, 'sine', 0.1, 0.08);
+      } else if (String(key).includes('lose') || String(key).includes('mine')) {
+        tone(170, 0.1, 'sawtooth', 0.12);
+        tone(120, 0.11, 'triangle', 0.09, 0.07);
+      } else if (String(key).includes('deal') || String(key).includes('tap') || String(key).includes('drop')) {
+        tone(260, 0.05, 'square', 0.1);
+        tone(200, 0.04, 'triangle', 0.06, 0.02);
+      } else {
+        tone(330, 0.06, 'triangle', 0.08);
+      }
+    },
+    [ensureCtx, prefs.masterVolume, prefs.sfxVolume]
+  );
+
   const play = useCallback(
     ({ key, src, volume = 1, cooldownMs = 0 }) => {
       if (!isUnlocked || prefs.muted || prefs.masterVolume <= 0 || prefs.sfxVolume <= 0 || !src) return;
@@ -68,24 +119,35 @@ export function SoundProvider({ children }) {
       if (!audio) {
         audio = new Audio(src);
         audio.preload = 'auto';
+        audio.addEventListener('error', () => {
+          failedSrcRef.current.add(src);
+          if (!loggedMissingRef.current.has(src)) {
+            console.warn(`[sound] Missing or unreadable audio file: ${src}`);
+            loggedMissingRef.current.add(src);
+          }
+        });
         cacheRef.current.set(src, audio);
       }
 
       const finalVolume = clamp(volume) * prefs.masterVolume * prefs.sfxVolume;
 
       try {
+        if (failedSrcRef.current.has(src)) {
+          synthFallback(key, volume);
+          return;
+        }
         audio.pause();
         audio.currentTime = 0;
         audio.volume = finalVolume;
         const playPromise = audio.play();
         if (playPromise?.catch) {
-          playPromise.catch(() => {});
+          playPromise.catch(() => synthFallback(key, volume));
         }
       } catch {
-        // ignore failed playback when browser blocks audio
+        synthFallback(key, volume);
       }
     },
-    [isUnlocked, prefs.muted, prefs.masterVolume, prefs.sfxVolume]
+    [isUnlocked, prefs.muted, prefs.masterVolume, prefs.sfxVolume, synthFallback]
   );
 
   const value = useMemo(

@@ -40,6 +40,22 @@ const __dirname = path.dirname(__filename);
 const DIST_DIR = path.resolve(__dirname, '../dist');
 let dbReady = false;
 let servicesInitialized = false;
+const slotImageCache = new Map();
+
+const SLOT_IMAGE_SOURCES = {
+  'mole-digger-slots':
+    'https://released.playngonetwork.com/casino/ContainerLauncher?pid=2&gid=moledigger&lang=en_GB&practice=1&channel=desktop&demo=2',
+  'rise-of-olympus-1000':
+    'https://released.playngonetwork.com/casino/ContainerLauncher?pid=2&gid=riseofolympus1000&lang=en_GB&practice=1&channel=desktop&demo=2',
+  'fangs-and-fire':
+    'https://released.playngonetwork.com/casino/ContainerLauncher?pid=2&gid=fangsandfire&lang=en_GB&practice=1&channel=mobile&demo=2',
+  'lawnnd-isorder':
+    'https://released.playngonetwork.com/casino/ContainerLauncher?pid=2&gid=lawnnd.isorder&lang=en_GB&practice=1&channel=mobile&demo=2',
+  'hotdog-heist':
+    'https://released.playngonetwork.com/casino/ContainerLauncher?pid=2&gid=hotdogheist&lang=en_GB&practice=1&channel=mobile&demo=2',
+  'bonanza-down-under':
+    'https://asccw.playngonetwork.com/casino/ContainerLauncher?pid=2&gid=bonanzadownunder&lang=en_GB&practice=1&channel=mobile&demo=2'
+};
 
 const isPrivateLanHost = (host) => {
   if (!host) return false;
@@ -69,6 +85,70 @@ const isPromotionActive = (promo, now = new Date()) => {
   if (starts && now < starts) return false;
   if (ends && now > ends) return false;
   return true;
+};
+
+const extractMetaImage = (html = '') => {
+  const patterns = [
+    /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i,
+    /<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i,
+    /<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)["']/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match?.[1]) return match[1];
+  }
+  return '';
+};
+
+const refreshSlotImageInBackground = async (slug, launchUrl, fallback) => {
+  try {
+    const now = Date.now();
+    const cacheRow = slotImageCache.get(slug);
+    if (cacheRow?.refreshing) return;
+
+    slotImageCache.set(slug, {
+      url: cacheRow?.url || fallback,
+      expiresAt: cacheRow?.expiresAt || 0,
+      refreshing: true
+    });
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3200);
+    const response = await fetch(launchUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'user-agent': 'RapidRollsBot/1.0 (+slot-image-resolver)'
+      }
+    });
+    clearTimeout(timeout);
+
+    const html = await response.text();
+    let imageUrl = extractMetaImage(html);
+    if (!imageUrl) {
+      const host = new URL(launchUrl).origin;
+      imageUrl = `${host}/favicon.ico`;
+    }
+    if (imageUrl.startsWith('//')) imageUrl = `https:${imageUrl}`;
+    if (imageUrl.startsWith('/')) imageUrl = `${new URL(launchUrl).origin}${imageUrl}`;
+
+    slotImageCache.set(slug, {
+      url: imageUrl || fallback,
+      expiresAt: now + 1000 * 60 * 60 * 6,
+      refreshing: false
+    });
+  } catch {
+    const current = slotImageCache.get(slug);
+    slotImageCache.set(slug, {
+      url: current?.url || fallback,
+      expiresAt: Date.now() + 1000 * 60 * 10,
+      refreshing: false
+    });
+  }
 };
 
 if (!MONGODB_URI) {
@@ -1125,34 +1205,57 @@ async function seedDefaults() {
     });
   }
 
-  const promoCount = await Promotion.countDocuments();
-  if (promoCount === 0) {
-    await Promotion.insertMany([
-      {
-        title: 'Weekly Rakeback',
-        description: 'Automatic weekly cashback based on your activity.',
-        image: '/site/promo-rakeback.svg',
-        path: '/wallet',
-        cta: 'Claim Cashback',
-        badge: 'Cashback'
-      },
-      {
-        title: 'Reload Bonus',
-        description: 'Boost your next deposit with a limited-time reload.',
-        image: '/site/promo-reload.svg',
-        path: '/wallet',
-        cta: 'Deposit Now',
-        badge: 'Reload'
-      },
-      {
-        title: 'Race Leaderboard',
-        description: 'Earn points from every wager and climb the weekly rankings.',
-        image: '/site/promo-race.svg',
-        path: '/vip',
-        cta: 'Join Race',
-        badge: 'Competitive'
-      }
-    ]);
+  const starterPromos = [
+    {
+      title: 'Starter Welcome Pack',
+      description: 'Kick off with bonus demo credits and unlock your first challenges.',
+      image: '/site/promo-welcome.svg',
+      path: '/wallet',
+      cta: 'Claim Starter Pack',
+      badge: 'Starter',
+      amount: 1000,
+      uses: 999999,
+      usesRemaining: 999999,
+      enabled: true,
+      rewardType: 'deposit_bonus',
+      placement: 'lobby'
+    },
+    {
+      title: 'Daily Boost x2',
+      description: 'Double your daily reward value for active sessions.',
+      image: '/site/promo-cashback.svg',
+      path: '/daily',
+      cta: 'Activate Daily Boost',
+      badge: 'Daily',
+      amount: 20,
+      uses: 999999,
+      usesRemaining: 999999,
+      enabled: true,
+      rewardType: 'daily_boost',
+      placement: 'promotions'
+    },
+    {
+      title: 'Weekend Race Event',
+      description: 'Play featured games and climb the weekend leaderboard for bonus prizes.',
+      image: '/site/promo-race.svg',
+      path: '/leaderboard',
+      cta: 'Join Weekend Race',
+      badge: 'Event',
+      amount: 250,
+      uses: 999999,
+      usesRemaining: 999999,
+      enabled: true,
+      rewardType: 'leaderboard_event',
+      placement: 'lobby'
+    }
+  ];
+
+  for (const promo of starterPromos) {
+    await Promotion.findOneAndUpdate(
+      { title: promo.title },
+      { $setOnInsert: promo },
+      { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+    );
   }
 
   await Promotion.updateMany(
@@ -1799,6 +1902,30 @@ app.get('/api/leaderboard', authRequired, async (req, res) => {
     rows: ranked,
     me
   });
+});
+
+app.get('/api/slots/image/:slug', async (req, res) => {
+  const slug = String(req.params.slug || '').trim().toLowerCase();
+  const launchUrl = SLOT_IMAGE_SOURCES[slug];
+  const fallback = `/games/${slug}.svg`;
+  if (!launchUrl) {
+    return res.redirect(fallback);
+  }
+
+  const now = Date.now();
+  const cached = slotImageCache.get(slug);
+  if (cached?.url && cached.expiresAt > now) {
+    return res.redirect(cached.url || fallback);
+  }
+
+  // Always respond fast with fallback, then refresh provider image in background.
+  slotImageCache.set(slug, {
+    url: cached?.url || fallback,
+    expiresAt: now + 1000 * 60 * 5,
+    refreshing: Boolean(cached?.refreshing)
+  });
+  void refreshSlotImageInBackground(slug, launchUrl, fallback);
+  return res.redirect(slotImageCache.get(slug)?.url || fallback);
 });
 
 app.get('/api/public/state', async (_req, res) => {

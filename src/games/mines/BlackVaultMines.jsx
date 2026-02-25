@@ -419,8 +419,6 @@ function BlackVaultMines({ isGameDisabled, userBalance, applyBalanceDelta, token
   const revealTile = (index) => {
     if (status !== 'active' || isBusy || revealed.has(index) || backVisibleTiles.has(index)) return;
 
-    sounds.play('tile_tap');
-
     updateSet(setPressedTiles, index, true);
     window.setTimeout(() => updateSet(setPressedTiles, index, false), 80);
 

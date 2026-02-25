@@ -1,215 +1,127 @@
-import Carousel from '../components/ui/Carousel';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Card from '../components/ui/Card';
-import Button from '../components/ui/Button';
-import GameCard from '../components/game/GameCard';
 import { useAuth } from '../context/AuthContext';
-import { useAdmin } from '../context/AdminContext';
-import { gameList, isImplementedGame, slugify } from '../data/gameCatalog';
-
-const promotions = [
-  {
-    title: 'Welcome Offer',
-    description: 'Claim your first reward pack when you register.',
-    image: '/site/promo-welcome.svg',
-    ctaPath: '/wallet',
-    ctaLabel: 'Open Wallet'
-  },
-  {
-    title: 'Weekly Cashback',
-    description: 'Get a percentage of your weekly play back as credits.',
-    image: '/site/promo-cashback.svg',
-    ctaPath: '/daily',
-    ctaLabel: 'Claim Daily'
-  },
-  {
-    title: 'Leaderboard Race',
-    description: 'Compete in weekly rankings and unlock prize pools.',
-    image: '/site/promo-leaderboard.svg',
-    ctaPath: '/vip',
-    ctaLabel: 'Enter VIP'
-  }
-];
+import { gameCatalog, getFeaturedGames, getHomeCategoryPreviews, searchGames } from '../data/gameCatalog';
+import CategoryHubCard from '../features/lobby/components/CategoryHubCard';
+import RecentlyPlayedRow from '../features/lobby/components/RecentlyPlayedRow';
+import { useRecentlyPlayed } from '../features/lobby/hooks/useRecentlyPlayed';
 
 function Home() {
-  const { user, isDailyAvailable } = useAuth();
-  const { games: managedGames, isSiteOnline } = useAdmin();
+  const { user } = useAuth();
+  const { recent } = useRecentlyPlayed();
+  const [search, setSearch] = useState('');
 
-  const getDisabledState = (title) => {
-    if (!isSiteOnline) return true;
-    if (!isImplementedGame(title)) return true;
-    const gameState = managedGames.find((game) => game.slug === slugify(title));
-    return gameState ? !gameState.enabled : false;
-  };
+  const categoryPanels = useMemo(() => getHomeCategoryPreviews(), []);
+  const featured = useMemo(() => getFeaturedGames(undefined, 6), []);
+  const searchResults = useMemo(() => searchGames(search).slice(0, 8), [search]);
 
-  const originals = gameList.filter((game) => game.tag === 'Originals');
-  const slots = gameList.filter((game) => game.tag === 'Slots');
-  const tableGames = gameList.filter((game) => game.tag === 'Table' || game.tag === 'Live' || game.tag === 'Cards');
+  const recentRows = useMemo(() => {
+    const bySlug = new Map(gameCatalog.map((row) => [row.slug, row]));
+    return recent.map((slug) => bySlug.get(slug)).filter(Boolean);
+  }, [recent]);
 
   return (
-    <>
-      {/* HERO */}
-      <section className="hero">
-        <div className="hero-content">
-          <span className="eyebrow">Rapid Rolls 2.0</span>
-          <h1>Play Smarter. Faster. Cleaner.</h1>
-          <p>
-            A modern casino lobby with fast navigation, one-tap wallet controls,
-            and daily rewards available right after login.
-          </p>
-          <div className="hero-actions">
-            <Button as="link" to={user ? '/games' : '/register'}>
-              {user ? 'Go To Games' : 'Start Playing'}
-            </Button>
-            <Button as="link" to={user ? '/wallet' : '/promotions'} variant="outline">
-              {user ? 'Open Wallet' : 'View Promotions'}
-            </Button>
-          </div>
-        </div>
-        <div className="hero-media-wrap">
-          <img
-            className="hero-media"
-            src="/site/rapid-hero.svg"
-            alt="Rapid Rolls lobby preview"
+    <section className="page-section lobby-page">
+      <header className="page-header">
+        <h1>RapidRoll Dashboard</h1>
+        <p>Choose a category to browse cleanly separated game libraries.</p>
+      </header>
+
+      <Card className="lobby-topbar">
+        <label className="lobby-search" htmlFor="home-search">
+          Search Games
+          <input
+            id="home-search"
+            type="text"
+            value={search}
+            placeholder="Search all games"
+            onChange={(event) => setSearch(event.target.value)}
           />
+        </label>
+
+        <div className="lobby-top-shortcuts">
+          <Link className="lobby-shortcut is-active" to="/originals">
+            Originals
+          </Link>
+          <Link className="lobby-shortcut" to="/slots">
+            Slots
+          </Link>
+          <Link className="lobby-shortcut" to="/table-games">
+            Table Games
+          </Link>
         </div>
+
+        <div className="lobby-top-right">
+          <span className="lobby-balance">Balance: ${Number(user?.balance || 0).toFixed(2)}</span>
+        </div>
+      </Card>
+
+      <section className="lobby-hero-grid">
+        <Card className="lobby-featured-card">
+          <h2>Featured Now</h2>
+          <div className="lobby-featured-grid">
+            {featured.map((game) => (
+              <Link key={game.id} className="btn btn-outline" to={game.route}>
+                {game.name}
+              </Link>
+            ))}
+          </div>
+        </Card>
+
+        <Card className="lobby-featured-card">
+          <h2>Starting Promos</h2>
+          <div className="lobby-promo-mini-list">
+            <article>
+              <strong>Starter Welcome Pack</strong>
+              <p>Claim bonus demo credits and unlock your first challenge rewards.</p>
+            </article>
+            <article>
+              <strong>Daily Boost x2</strong>
+              <p>Double claim value available in your daily bonus panel.</p>
+            </article>
+            <article>
+              <strong>Weekend Race Event</strong>
+              <p>Compete in leaderboard activity for bonus event rewards.</p>
+            </article>
+          </div>
+        </Card>
       </section>
 
-      {/* ACCOUNT SNAPSHOT */}
-      {user && (
-        <section className="page-section">
-          <h2 className="section-title">Account Snapshot</h2>
-          <div className="wallet-grid">
-            <Card>
-              <h3>Account</h3>
-              <p className="wallet-value">Active</p>
-            </Card>
-            <Card>
-              <h3>VIP Tier</h3>
-              <p className="wallet-value">{user.vipTier}</p>
-            </Card>
-            <Card>
-              <h3>Daily Bonus</h3>
-              <p className="wallet-value">{isDailyAvailable ? 'Ready to claim' : 'Claimed today'}</p>
-            </Card>
+      {search.trim() ? (
+        <section className="lobby-section">
+          <header className="lobby-section-head">
+            <div>
+              <h2>Search Results</h2>
+              <p>{searchResults.length} games found</p>
+            </div>
+          </header>
+          <div className="lobby-grid">
+            {searchResults.map((game) => (
+              <CategoryHubCard
+                key={game.id}
+                section={{
+                  id: game.slug,
+                  title: game.name,
+                  count: 1,
+                  description: `${game.provider} • ${game.category}`,
+                  previews: [game],
+                  route: game.route
+                }}
+              />
+            ))}
           </div>
+        </section>
+      ) : (
+        <section className="category-hub-grid">
+          {categoryPanels.map((section) => (
+            <CategoryHubCard key={section.id} section={section} />
+          ))}
         </section>
       )}
 
-      {/* ORIGINALS */}
-      <Carousel title="Originals">
-        {originals.map((game) => (
-          <GameCard
-            key={game.title}
-            title={game.title}
-            image={game.image}
-            tag={game.tag}
-            minimal
-            disabled={getDisabledState(game.title)}
-          />
-        ))}
-      </Carousel>
-
-      {/* SLOTS */}
-      <Carousel title="Slots">
-        {slots.map((game) => (
-          <GameCard
-            key={game.title}
-            title={game.title}
-            image={game.image}
-            tag={game.tag}
-            minimal
-            disabled={getDisabledState(game.title)}
-          />
-        ))}
-      </Carousel>
-
-      {user ? (
-        <>
-          {/* TABLE GAMES */}
-          <Carousel title="Table & Live">
-            {tableGames.map((game) => (
-              <GameCard
-                key={game.title}
-                title={game.title}
-                image={game.image}
-                tag={game.tag}
-                minimal
-                disabled={getDisabledState(game.title)}
-              />
-            ))}
-          </Carousel>
-
-          {/* LOGGED-IN ACTIONS */}
-          <section className="page-section">
-            <h2 className="section-title">Today In Rapid Rolls</h2>
-            <div className="steps-grid">
-              <Card className="step-card">
-                <h3>Daily Status</h3>
-                <p>{isDailyAvailable ? 'Daily bonus is ready to claim.' : 'Daily bonus already claimed today.'}</p>
-              </Card>
-              <Card className="step-card">
-                <h3>VIP Progress</h3>
-                <p>Track level progress and rewards in the VIP Lounge.</p>
-              </Card>
-              <Card className="step-card">
-                <h3>Wallet</h3>
-                <p>Manage deposits and withdrawals from the wallet page.</p>
-              </Card>
-              <Card className="step-card">
-                <h3>Admin Alerts</h3>
-                <p>See live notifications posted by staff under the header.</p>
-              </Card>
-            </div>
-          </section>
-        </>
-      ) : (
-        <>
-          {/* PROMOTIONS */}
-          <section className="page-section">
-            <h2 className="section-title">Promotions</h2>
-            <div className="promo-grid">
-              {promotions.map((promo) => (
-                <Card className="promo-card" key={promo.title}>
-                  <img className="media-image" src={promo.image} alt={promo.title} loading="lazy" />
-                  <h3>{promo.title}</h3>
-                  <p>{promo.description}</p>
-                  <Button as="link" to={promo.ctaPath}>
-                    {promo.ctaLabel}
-                  </Button>
-                </Card>
-              ))}
-            </div>
-          </section>
-
-          {/* HOW TO */}
-          <section className="page-section">
-            <h2 className="section-title">How To Get Started</h2>
-            <div className="steps-grid">
-              <Card className="step-card">
-                <span className="step-number">1</span>
-                <h3>Create Account</h3>
-                <p>Sign up and verify your profile in minutes.</p>
-              </Card>
-              <Card className="step-card">
-                <span className="step-number">2</span>
-                <h3>Deposit Funds</h3>
-                <p>Use Wallet to instantly add balance.</p>
-              </Card>
-              <Card className="step-card">
-                <span className="step-number">3</span>
-                <h3>Claim Daily</h3>
-                <p>Open Daily Bonus and claim once every day.</p>
-              </Card>
-              <Card className="step-card">
-                <span className="step-number">4</span>
-                <h3>Play & Win</h3>
-                <p>Launch games and track tier progress in VIP.</p>
-              </Card>
-            </div>
-          </section>
-        </>
-      )}
-    </>
+      <RecentlyPlayedRow games={recentRows} />
+    </section>
   );
 }
 

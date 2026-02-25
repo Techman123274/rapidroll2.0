@@ -1,6 +1,9 @@
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import Home from './pages/Home';
 import Games from './pages/Games';
+import Originals from './pages/Originals';
+import Slots from './pages/Slots';
+import TableGames from './pages/TableGames';
 import Promotions from './pages/Promotions';
 import Vip from './pages/Vip';
 import Login from './pages/Login';
@@ -47,6 +50,9 @@ function AppRoutes() {
     <Routes>
       <Route path="/" element={<Home />} />
       <Route path="/games" element={<Games />} />
+      <Route path="/originals" element={<Originals />} />
+      <Route path="/slots" element={<Slots />} />
+      <Route path="/table-games" element={<TableGames />} />
       <Route path="/promotions" element={<Promotions />} />
       <Route
         path="/tournaments"

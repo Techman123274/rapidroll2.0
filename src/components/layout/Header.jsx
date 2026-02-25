@@ -33,14 +33,20 @@ function Header() {
 
         {/* PRIMARY NAV */}
         <nav className="main-nav" aria-label="Primary">
-          <NavLink to="/tournaments" className="nav-link">
-            Tournaments
+          <NavLink to="/originals" className="nav-link">
+            Originals
           </NavLink>
-          <NavLink to="/leaderboard" className="nav-link">
-            Leaderboard
+          <NavLink to="/slots" className="nav-link">
+            Slots
+          </NavLink>
+          <NavLink to="/table-games" className="nav-link">
+            Table Games
           </NavLink>
           <NavLink to="/challenges" className="nav-link">
             Challenges
+          </NavLink>
+          <NavLink to="/leaderboard" className="nav-link">
+            Leaderboard
           </NavLink>
           {(user?.role === 'admin' || user?.role === 'owner') && (
             <NavLink to="/admin" className="nav-link">
