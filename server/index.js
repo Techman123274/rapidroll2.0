@@ -16,6 +16,8 @@ const PORT = Number(process.env.PORT || 4000);
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const MONGODB_URI = process.env.MONGODB_URI;
 const MONGODB_URI_FALLBACK = process.env.MONGODB_URI_FALLBACK || 'mongodb://127.0.0.1:27017/rapid_rolls';
+const DB_RETRY_MS = Number(process.env.DB_RETRY_MS || 10000);
+const USE_MONGODB_FALLBACK = process.env.USE_MONGODB_FALLBACK === 'true' || NODE_ENV !== 'production';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_insecure_secret_change_me';
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
 const CLIENT_ORIGINS = (process.env.CLIENT_ORIGINS || '')
@@ -33,6 +35,8 @@ const SERVE_STATIC = process.env.SERVE_STATIC !== 'false';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DIST_DIR = path.resolve(__dirname, '../dist');
+let dbReady = false;
+let servicesInitialized = false;
 
 const isPrivateLanHost = (host) => {
   if (!host) return false;
@@ -1010,8 +1014,13 @@ const requireRole = (...roles) => (req, res, next) => {
 };
 
 app.get('/api/health', async (_req, res) => {
-  const siteSetting = await Setting.findOne({ key: 'site_online' });
-  res.json({ ok: true, siteOnline: Boolean(siteSetting?.value) });
+  const readyState = mongoose.connection.readyState;
+  res.json({
+    ok: true,
+    dbReady,
+    mongooseReadyState: readyState,
+    uptimeSec: Math.floor(process.uptime())
+  });
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -2857,24 +2866,51 @@ app.use(async (err, req, res, _next) => {
   res.status(statusCode).json({ message: err.message || 'Internal server error' });
 });
 
-async function start() {
-  try {
-    await mongoose.connect(MONGODB_URI);
-    console.log('Connected to primary MongoDB URI');
-  } catch (primaryError) {
-    console.error(`Primary MongoDB connection failed: ${primaryError.message}`);
-    console.log(`Trying fallback MongoDB URI: ${MONGODB_URI_FALLBACK}`);
-    await mongoose.connect(MONGODB_URI_FALLBACK);
-    console.log('Connected to fallback MongoDB URI');
+async function connectDatabaseWithRetry() {
+  while (!dbReady) {
+    try {
+      await mongoose.connect(MONGODB_URI);
+      dbReady = true;
+      console.log('Connected to primary MongoDB URI');
+      break;
+    } catch (primaryError) {
+      console.error(`Primary MongoDB connection failed: ${primaryError.message}`);
+      if (!USE_MONGODB_FALLBACK) {
+        console.log(`Retrying primary MongoDB URI in ${DB_RETRY_MS}ms`);
+        await new Promise((resolve) => setTimeout(resolve, DB_RETRY_MS));
+        continue;
+      }
+      try {
+        console.log(`Trying fallback MongoDB URI: ${MONGODB_URI_FALLBACK}`);
+        await mongoose.connect(MONGODB_URI_FALLBACK);
+        dbReady = true;
+        console.log('Connected to fallback MongoDB URI');
+        break;
+      } catch (fallbackError) {
+        console.error(`Fallback MongoDB connection failed: ${fallbackError.message}`);
+        console.log(`Retrying MongoDB connection in ${DB_RETRY_MS}ms`);
+        await new Promise((resolve) => setTimeout(resolve, DB_RETRY_MS));
+      }
+    }
   }
-  await seedDefaults();
-  scheduleNextCrashRound();
+}
+
+async function initializeServices() {
+  await connectDatabaseWithRetry();
+  if (!servicesInitialized) {
+    await seedDefaults();
+    scheduleNextCrashRound();
+    servicesInitialized = true;
+  }
+}
+
+async function start() {
   app.listen(PORT, () => {
     console.log(`API server running on http://localhost:${PORT}`);
   });
+  await initializeServices();
 }
 
 start().catch((error) => {
-  console.error('Failed to start server', error);
-  process.exit(1);
+  console.error('Failed to initialize services', error);
 });
