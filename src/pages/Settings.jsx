@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import { useAuth } from '../context/AuthContext';
+import { useSound } from '../context/SoundContext';
 
 function Settings() {
   const { user } = useAuth();
+  const { muted, setMuted, masterVolume, setMasterVolume, sfxVolume, setSfxVolume, unlockAudio } = useSound();
   const [settings, setSettings] = useState({
     emailPromotions: true,
-    gameSounds: true,
+    gameSounds: !muted,
     quickBetConfirm: false,
     twoFactor: false
   });
@@ -15,6 +17,10 @@ function Settings() {
   const toggle = (key) => {
     setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
   };
+
+  useEffect(() => {
+    setSettings((prev) => ({ ...prev, gameSounds: !muted }));
+  }, [muted]);
 
   return (
     <section className="page-section">
@@ -62,8 +68,28 @@ function Settings() {
             <input
               type="checkbox"
               checked={settings.gameSounds}
-              onChange={() => toggle('gameSounds')}
+              onChange={() => {
+                const nextEnabled = !settings.gameSounds;
+                setSettings((prev) => ({ ...prev, gameSounds: nextEnabled }));
+                setMuted(!nextEnabled);
+                if (nextEnabled) unlockAudio();
+              }}
             />
+          </label>
+          <label className="setting-row setting-row-column">
+            <span>Master volume ({Math.round(masterVolume * 100)}%)</span>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={masterVolume}
+              onChange={(event) => setMasterVolume(event.target.value)}
+            />
+          </label>
+          <label className="setting-row setting-row-column">
+            <span>SFX volume ({Math.round(sfxVolume * 100)}%)</span>
+            <input type="range" min="0" max="1" step="0.01" value={sfxVolume} onChange={(event) => setSfxVolume(event.target.value)} />
           </label>
           <label className="setting-row">
             <span>Quick bet confirmation</span>

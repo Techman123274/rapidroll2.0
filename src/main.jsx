@@ -4,15 +4,18 @@ import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { AuthProvider } from './context/AuthContext';
 import { AdminProvider } from './context/AdminContext';
+import { SoundProvider } from './context/SoundContext';
 import './styles.css';
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <AdminProvider>
-          <App />
-        </AdminProvider>
+        <SoundProvider>
+          <AdminProvider>
+            <App />
+          </AdminProvider>
+        </SoundProvider>
       </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>

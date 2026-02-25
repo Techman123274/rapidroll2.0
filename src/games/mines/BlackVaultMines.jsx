@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Button from '../../components/ui/Button';
 import FairnessPanel from '../../components/fairness/FairnessPanel';
+import { useSound } from '../../context/SoundContext';
 
 const SOUND_SETTINGS = {
   tile_tap: { src: '/sounds/tile_tap.wav', volume: 0.25, cooldownMs: 35 },
@@ -8,9 +9,6 @@ const SOUND_SETTINGS = {
   mine_thud: { src: '/sounds/mine_thud.wav', volume: 0.4, cooldownMs: 80 },
   cashout_rise: { src: '/sounds/cashout_rise.wav', volume: 0.5, cooldownMs: 120 }
 };
-
-const VOLUME_KEY = 'blackvault_mines_volume';
-const MUTE_KEY = 'blackvault_mines_muted';
 
 const formatMoney = (value) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -262,6 +260,7 @@ function StakeMinesTile({
 }
 
 function BlackVaultMines({ isGameDisabled, userBalance, applyBalanceDelta, token }) {
+  const { muted, masterVolume, sfxVolume, setMuted, setSfxVolume, unlockAudio } = useSound();
   const [gridSize, setGridSize] = useState(5);
   const [mineCount, setMineCount] = useState(3);
   const [bet, setBet] = useState(10);
@@ -281,12 +280,6 @@ function BlackVaultMines({ isGameDisabled, userBalance, applyBalanceDelta, token
   const [autoCashoutTarget, setAutoCashoutTarget] = useState(1.5);
   const [autoBet, setAutoBet] = useState(false);
 
-  const [volume, setVolume] = useState(() => {
-    const saved = Number(localStorage.getItem(VOLUME_KEY));
-    return Number.isFinite(saved) ? Math.max(0, Math.min(1, saved)) : 0.7;
-  });
-  const [muted, setMuted] = useState(() => localStorage.getItem(MUTE_KEY) === 'true');
-
   const [pressedTiles, setPressedTiles] = useState(new Set());
   const [flippingTiles, setFlippingTiles] = useState(new Set());
   const [backVisibleTiles, setBackVisibleTiles] = useState(new Set());
@@ -302,7 +295,7 @@ function BlackVaultMines({ isGameDisabled, userBalance, applyBalanceDelta, token
   const statusRef = useRef(status);
   const revealedRef = useRef(revealed);
 
-  const sounds = useStakeMinesAudio(volume, muted);
+  const sounds = useStakeMinesAudio(Math.max(0, Math.min(1, masterVolume * sfxVolume)), muted);
 
   const tileCount = gridSize * gridSize;
   const maxMines = Math.min(24, tileCount - 1);
@@ -332,14 +325,6 @@ function BlackVaultMines({ isGameDisabled, userBalance, applyBalanceDelta, token
   useEffect(() => {
     revealedRef.current = revealed;
   }, [revealed]);
-
-  useEffect(() => {
-    localStorage.setItem(VOLUME_KEY, String(volume));
-  }, [volume]);
-
-  useEffect(() => {
-    localStorage.setItem(MUTE_KEY, String(muted));
-  }, [muted]);
 
   useEffect(() => {
     setMultPulse(true);
@@ -388,6 +373,7 @@ function BlackVaultMines({ isGameDisabled, userBalance, applyBalanceDelta, token
     }
 
     setIsBusy(true);
+    unlockAudio();
     const debited = await applyBalanceDelta(-bet);
     if (!debited.ok) {
       setMessage('Bet failed. Try again.');
@@ -660,14 +646,14 @@ function BlackVaultMines({ isGameDisabled, userBalance, applyBalanceDelta, token
             </label>
 
             <label className="volume-label">
-              Volume
+              SFX
               <input
                 type="range"
                 min="0"
                 max="1"
                 step="0.01"
-                value={volume}
-                onChange={(event) => setVolume(Number(event.target.value))}
+                value={sfxVolume}
+                onChange={(event) => setSfxVolume(Number(event.target.value))}
               />
             </label>
           </div>

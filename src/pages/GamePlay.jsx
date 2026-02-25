@@ -13,6 +13,7 @@ import LimboVault from '../games/limbo/LimboVault';
 import PlinkoDrop from '../games/plinko/PlinkoDrop';
 import TowersX from '../games/towers/TowersX';
 import SlotGamePage from '../games/slots/SlotGamePage';
+import PokerArena from '../games/poker/PokerArena';
 import { isSlotSlug, slotGameBySlug } from '../data/slotGames';
 
 const cardRanks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
@@ -49,6 +50,7 @@ const isRouletteGame = (slug) => slug === 'roulette-pro';
 const isLimboGame = (slug) => slug === 'limbo-vault';
 const isPlinkoGame = (slug) => slug === 'plinko-drop';
 const isTowersGame = (slug) => slug === 'towers-x';
+const isPokerGame = (slug) => slug === 'poker-arena';
 
 const formatMoney = (value) => `$${Number(value || 0).toFixed(2)}`;
 
@@ -917,6 +919,7 @@ function GamePlay() {
   const showLimbo = isLimboGame(gameSlug);
   const showPlinko = isPlinkoGame(gameSlug);
   const showTowers = isTowersGame(gameSlug);
+  const showPoker = isPokerGame(gameSlug);
   const selectedSlot = showSlot ? slotGameBySlug[gameSlug] : null;
   const liveBalance = Number(user.balance || 0);
 
@@ -966,6 +969,8 @@ function GamePlay() {
         <PlinkoDrop isGameDisabled={isGameDisabled} userBalance={liveBalance} token={token} syncUser={syncUser} />
       ) : showTowers ? (
         <TowersX isGameDisabled={isGameDisabled} userBalance={liveBalance} token={token} syncUser={syncUser} />
+      ) : showPoker ? (
+        <PokerArena isGameDisabled={isGameDisabled} token={token} userBalance={liveBalance} syncUser={syncUser} />
       ) : showSlot ? (
         <SlotGamePage slot={selectedSlot} isGameDisabled={isGameDisabled} />
       ) : showCrash ? (

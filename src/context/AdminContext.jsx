@@ -81,6 +81,15 @@ export function AdminProvider({ children }) {
     await refreshLogs();
   };
 
+  const updatePromotion = async (promotionId, payload) => {
+    const promotion = await api.updatePromotion(token, promotionId, payload);
+    setPromotions((prev) =>
+      prev.map((row) => (String(row._id || row.id) === String(promotionId) ? promotion : row))
+    );
+    await refreshLogs();
+    return promotion;
+  };
+
   const setUserPassword = async (userId, password) => {
     const value = String(password || '').trim();
     if (!value) return;
@@ -141,6 +150,7 @@ export function AdminProvider({ children }) {
       clearGlobalChat,
       postAnnouncement,
       addPromotion,
+      updatePromotion,
       setUserPassword,
       addAdmin,
       removeAdmin,

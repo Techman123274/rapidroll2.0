@@ -62,6 +62,15 @@ const isAllowedOrigin = (origin) => {
   }
 };
 
+const isPromotionActive = (promo, now = new Date()) => {
+  if (!promo || promo.enabled === false) return false;
+  const starts = promo.startAt ? new Date(promo.startAt) : null;
+  const ends = promo.endAt ? new Date(promo.endAt) : null;
+  if (starts && now < starts) return false;
+  if (ends && now > ends) return false;
+  return true;
+};
+
 if (!MONGODB_URI) {
   console.error('Missing MONGODB_URI in environment.');
   process.exit(1);
@@ -104,7 +113,13 @@ const userSchema = new mongoose.Schema(
     currency: { type: String, default: 'USD' },
     vipTier: { type: String, default: 'Silver' },
     dailyReward: { type: Number, default: 10 },
-    lastDailyClaimedAt: { type: Date, default: null }
+    lastDailyClaimedAt: { type: Date, default: null },
+    challengeClaims: [
+      {
+        challengeId: { type: String, required: true },
+        claimedAt: { type: Date, default: Date.now }
+      }
+    ]
   },
   { timestamps: true }
 );
@@ -120,7 +135,23 @@ const promotionSchema = new mongoose.Schema(
     badge: { type: String, default: 'New' },
     amount: { type: Number, default: 0 },
     uses: { type: Number, default: 0 },
-    usesRemaining: { type: Number, default: 0 }
+    usesRemaining: { type: Number, default: 0 },
+    enabled: { type: Boolean, default: true, index: true },
+    startAt: { type: Date, default: null, index: true },
+    endAt: { type: Date, default: null, index: true },
+    audience: { type: String, enum: ['all', 'vip', 'new_users', 'inactive_users'], default: 'all' },
+    rewardType: {
+      type: String,
+      enum: ['deposit_bonus', 'daily_boost', 'free_spins', 'cashback', 'challenge_boost', 'leaderboard_event', 'promo_code'],
+      default: 'daily_boost'
+    },
+    rewardConfig: { type: mongoose.Schema.Types.Mixed, default: {} },
+    placement: { type: String, enum: ['lobby', 'promotions', 'game', 'vip'], default: 'promotions' },
+    promoCode: { type: String, default: '' },
+    notifyOnPublish: { type: Boolean, default: false },
+    views: { type: Number, default: 0 },
+    claims: { type: Number, default: 0 },
+    conversions: { type: Number, default: 0 }
   },
   { timestamps: true }
 );
@@ -225,7 +256,7 @@ const transactionSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     game: { type: String, required: true },
-    type: { type: String, enum: ['bet', 'payout', 'daily_claim', 'deposit', 'withdraw'], required: true },
+    type: { type: String, enum: ['bet', 'payout', 'daily_claim', 'deposit', 'withdraw', 'challenge_reward'], required: true },
     amount: { type: Number, required: true },
     balanceBefore: { type: Number, required: true },
     balanceAfter: { type: Number, required: true },
@@ -282,6 +313,29 @@ const rouletteBetSlipSchema = new mongoose.Schema(
 
 rouletteBetSlipSchema.index({ userId: 1, createdAt: -1 });
 rouletteBetSlipSchema.index({ createdAt: -1 });
+
+const pokerHandSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
+    betAmount: { type: Number, required: true },
+    status: { type: String, enum: ['active', 'completed'], default: 'active', index: true },
+    initialHand: [{ type: String, required: true }],
+    finalHand: [{ type: String, default: [] }],
+    deck: [{ type: String, required: true }],
+    holds: [{ type: Boolean, default: false }],
+    handRank: { type: String, default: '' },
+    multiplier: { type: Number, default: 0 },
+    payout: { type: Number, default: 0 },
+    profit: { type: Number, default: 0 },
+    serverSeedHash: { type: String, required: true },
+    serverSeed: { type: String, required: true },
+    clientSeed: { type: String, required: true },
+    nonce: { type: Number, required: true }
+  },
+  { timestamps: true }
+);
+
+pokerHandSchema.index({ userId: 1, createdAt: -1 });
 
 const towersGameSchema = new mongoose.Schema(
   {
@@ -341,6 +395,7 @@ const Transaction = mongoose.model('Transaction', transactionSchema);
 const DailyClaim = mongoose.model('DailyClaim', dailyClaimSchema);
 const RouletteSpin = mongoose.model('RouletteSpin', rouletteSpinSchema);
 const RouletteBetSlip = mongoose.model('RouletteBetSlip', rouletteBetSlipSchema);
+const PokerHand = mongoose.model('PokerHand', pokerHandSchema);
 const TowersGame = mongoose.model('TowersGame', towersGameSchema);
 const FairnessSeedSession = mongoose.model('FairnessSeedSession', fairnessSeedSessionSchema);
 const FairnessVerificationLog = mongoose.model('FairnessVerificationLog', fairnessVerificationLogSchema);
@@ -431,6 +486,73 @@ const getVipProgress = (totalWagered = 0) => {
   };
 };
 
+const CHALLENGE_DEFINITIONS = [
+  { id: 'daily_wager_100', title: 'Daily Wager Sprint', type: 'daily', metric: 'wagered', target: 100, reward: 25, game: 'all' },
+  { id: 'daily_rounds_20', title: 'Round Grinder', type: 'daily', metric: 'betsCount', target: 20, reward: 20, game: 'all' },
+  { id: 'daily_mines_cashouts_5', title: 'Mines Cashout Chain', type: 'daily', metric: 'gameWins', target: 5, reward: 30, game: 'mines' },
+  { id: 'weekly_wager_1500', title: 'Weekly Volume', type: 'weekly', metric: 'wagered', target: 1500, reward: 120, game: 'all' },
+  { id: 'weekly_games_4', title: 'Variety Week', type: 'weekly', metric: 'distinctGames', target: 4, reward: 80, game: 'all' },
+  { id: 'weekly_plinko_25', title: 'Plinko Festival', type: 'event', metric: 'gameBets', target: 25, reward: 150, game: 'plinko' },
+  { id: 'weekly_crash_10_wins', title: 'Crash Pilot', type: 'weekly', metric: 'gameWins', target: 10, reward: 140, game: 'crash' }
+];
+
+const getPeriodStart = (period = 'daily') => {
+  const now = new Date();
+  const start = new Date(now);
+  if (period === 'weekly') {
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - 7);
+    return start;
+  }
+  if (period === 'monthly') {
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - 30);
+    return start;
+  }
+  if (period === 'all_time') {
+    return new Date(0);
+  }
+  start.setHours(0, 0, 0, 0);
+  return start;
+};
+
+const createEmptyChallengeStats = () => ({
+  wagered: 0,
+  betsCount: 0,
+  payoutsCount: 0,
+  distinctGames: 0,
+  games: {}
+});
+
+const getChallengeMetricValue = (challenge, stats) => {
+  if (challenge.metric === 'wagered') return Number(stats.wagered || 0);
+  if (challenge.metric === 'betsCount') return Number(stats.betsCount || 0);
+  if (challenge.metric === 'distinctGames') return Number(stats.distinctGames || 0);
+
+  const gameStats = stats.games[challenge.game] || { bets: 0, wins: 0 };
+  if (challenge.metric === 'gameWins') return Number(gameStats.wins || 0);
+  if (challenge.metric === 'gameBets') return Number(gameStats.bets || 0);
+  return 0;
+};
+
+const buildChallengeRows = (statsByType, claims = []) => {
+  const claimedSet = new Set((claims || []).map((item) => item.challengeId));
+  return CHALLENGE_DEFINITIONS.map((challenge) => {
+    const stats = statsByType[challenge.type] || createEmptyChallengeStats();
+    const progress = getChallengeMetricValue(challenge, stats);
+    const target = Number(challenge.target);
+    const completed = progress >= target;
+    return {
+      ...challenge,
+      progress: Number(progress.toFixed(2)),
+      target,
+      completed,
+      claimed: claimedSet.has(challenge.id),
+      progressPercent: Math.min(100, Number(((progress / target) * 100).toFixed(2)))
+    };
+  });
+};
+
 const CRASH_HOUSE_EDGE = 0.01;
 const CRASH_COUNTDOWN_MS = 6000;
 const CRASH_RESULTS_MS = 3000;
@@ -464,26 +586,63 @@ const buildLimboResult = (serverSeed, clientSeed, nonce) => {
   return Number(Math.min(1000, Math.max(1, value)).toFixed(2));
 };
 
-const PLINKO_ROWS = 12;
-const PLINKO_MULTIPLIERS = {
-  low: [0.5, 0.7, 0.9, 1, 1.1, 1.3, 1.5, 1.3, 1.1, 1, 0.9, 0.7, 0.5],
-  medium: [0.2, 0.4, 0.6, 0.9, 1.2, 1.8, 3, 1.8, 1.2, 0.9, 0.6, 0.4, 0.2],
-  high: [0.1, 0.2, 0.4, 0.8, 1.5, 3, 8, 3, 1.5, 0.8, 0.4, 0.2, 0.1]
+const VALID_PLINKO_ROWS = [8, 10, 12, 14, 16];
+const PLINKO_RISK_CONFIG = {
+  low: { min: 0.8, max: 3, power: 1.2, rtpTarget: 0.97 },
+  medium: { min: 0.5, max: 9, power: 1.7, rtpTarget: 0.96 },
+  high: { min: 0.2, max: 25, power: 2.3, rtpTarget: 0.95 },
+  extreme: { min: 0.08, max: 120, power: 3.1, rtpTarget: 0.94 }
 };
 
-const buildPlinkoResult = (serverSeed, clientSeed, nonce, risk = 'medium') => {
+const combination = (n, k) => {
+  if (k < 0 || k > n) return 0;
+  if (k === 0 || k === n) return 1;
+  const m = Math.min(k, n - k);
+  let value = 1;
+  for (let i = 1; i <= m; i += 1) {
+    value = (value * (n - m + i)) / i;
+  }
+  return value;
+};
+
+const getPlinkoMultipliers = (rows, risk) => {
+  const normalizedRows = VALID_PLINKO_ROWS.includes(Number(rows)) ? Number(rows) : 12;
+  const profile = PLINKO_RISK_CONFIG[risk] || PLINKO_RISK_CONFIG.medium;
+  const center = normalizedRows / 2;
+  const slotCount = normalizedRows + 1;
+
+  const raw = Array.from({ length: slotCount }, (_, slot) => {
+    const distance = Math.abs(slot - center) / Math.max(1, center);
+    const score = Math.pow(distance, profile.power);
+    return profile.min + (profile.max - profile.min) * score;
+  });
+
+  const probs = Array.from({ length: slotCount }, (_, slot) => combination(normalizedRows, slot) / 2 ** normalizedRows);
+  const expected = raw.reduce((sum, value, slot) => sum + value * probs[slot], 0);
+  const scale = expected > 0 ? profile.rtpTarget / expected : 1;
+
+  return raw.map((value) => Number(Math.max(0.05, value * scale).toFixed(4)));
+};
+
+const buildPlinkoResult = (serverSeed, clientSeed, nonce, risk = 'medium', rows = 12) => {
+  const normalizedRows = VALID_PLINKO_ROWS.includes(Number(rows)) ? Number(rows) : 12;
+  const normalizedRisk = PLINKO_RISK_CONFIG[risk] ? risk : 'medium';
   const digest = hashSeed(`${serverSeed}:${clientSeed}:${nonce}`);
   let rights = 0;
-  for (let i = 0; i < PLINKO_ROWS; i += 1) {
+  const path = [];
+  for (let i = 0; i < normalizedRows; i += 1) {
     const nibble = parseInt(digest[i], 16);
-    rights += nibble % 2;
+    const direction = nibble % 2;
+    rights += direction;
+    path.push(direction);
   }
-  const multipliers = PLINKO_MULTIPLIERS[risk] || PLINKO_MULTIPLIERS.medium;
+  const multipliers = getPlinkoMultipliers(normalizedRows, normalizedRisk);
   return {
     slot: rights,
     multiplier: Number((multipliers[rights] || 0).toFixed(4)),
-    risk,
-    rows: PLINKO_ROWS
+    risk: normalizedRisk,
+    rows: normalizedRows,
+    path
   };
 };
 
@@ -527,6 +686,117 @@ const buildRouletteNumber = (serverSeed, clientSeed, nonce) => {
   const intValue = parseInt(slice, 16);
   const result = intValue / 2 ** 52;
   return Math.floor(result * 37);
+};
+
+const pokerRanks = ['2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A'];
+const pokerSuits = ['S', 'H', 'D', 'C'];
+const pokerRankValue = {
+  '2': 2,
+  '3': 3,
+  '4': 4,
+  '5': 5,
+  '6': 6,
+  '7': 7,
+  '8': 8,
+  '9': 9,
+  T: 10,
+  J: 11,
+  Q: 12,
+  K: 13,
+  A: 14
+};
+const pokerPaytable = {
+  ROYAL_FLUSH: 250,
+  STRAIGHT_FLUSH: 50,
+  FOUR_OF_A_KIND: 25,
+  FULL_HOUSE: 9,
+  FLUSH: 6,
+  STRAIGHT: 4,
+  THREE_OF_A_KIND: 3,
+  TWO_PAIR: 2,
+  JACKS_OR_BETTER: 1,
+  HIGH_CARD: 0
+};
+
+const buildPokerDeck = () => {
+  const deck = [];
+  pokerSuits.forEach((suit) => {
+    pokerRanks.forEach((rank) => {
+      deck.push(`${rank}${suit}`);
+    });
+  });
+  return deck;
+};
+
+const buildPokerShuffledDeck = (serverSeed, clientSeed, nonce) => {
+  const deck = buildPokerDeck();
+  let cursor = 0;
+  let stream = hashSeed(`${serverSeed}:${clientSeed}:${nonce}:poker-shuffle`);
+
+  for (let i = deck.length - 1; i > 0; i -= 1) {
+    if (cursor + 8 > stream.length) {
+      stream = hashSeed(`${stream}:${i}`);
+      cursor = 0;
+    }
+    const chunk = stream.slice(cursor, cursor + 8);
+    cursor += 8;
+    const j = parseInt(chunk, 16) % (i + 1);
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+
+  return deck;
+};
+
+const evaluatePokerHand = (cards) => {
+  if (!Array.isArray(cards) || cards.length !== 5) {
+    return { rank: 'HIGH_CARD', multiplier: 0 };
+  }
+
+  const ranks = cards.map((card) => card.slice(0, 1));
+  const suits = cards.map((card) => card.slice(1, 2));
+  const values = ranks.map((rank) => pokerRankValue[rank]).sort((a, b) => a - b);
+  const counts = {};
+  ranks.forEach((rank) => {
+    counts[rank] = (counts[rank] || 0) + 1;
+  });
+  const groups = Object.values(counts).sort((a, b) => b - a);
+
+  const flush = new Set(suits).size === 1;
+  let straight = values.every((value, index) => (index === 0 ? true : value === values[index - 1] + 1));
+  const wheel = JSON.stringify(values) === JSON.stringify([2, 3, 4, 5, 14]);
+  if (wheel) straight = true;
+
+  if (flush && straight && Math.max(...values) === 14 && Math.min(...values) === 10) {
+    return { rank: 'ROYAL_FLUSH', multiplier: pokerPaytable.ROYAL_FLUSH };
+  }
+  if (flush && straight) {
+    return { rank: 'STRAIGHT_FLUSH', multiplier: pokerPaytable.STRAIGHT_FLUSH };
+  }
+  if (groups[0] === 4) {
+    return { rank: 'FOUR_OF_A_KIND', multiplier: pokerPaytable.FOUR_OF_A_KIND };
+  }
+  if (groups[0] === 3 && groups[1] === 2) {
+    return { rank: 'FULL_HOUSE', multiplier: pokerPaytable.FULL_HOUSE };
+  }
+  if (flush) {
+    return { rank: 'FLUSH', multiplier: pokerPaytable.FLUSH };
+  }
+  if (straight) {
+    return { rank: 'STRAIGHT', multiplier: pokerPaytable.STRAIGHT };
+  }
+  if (groups[0] === 3) {
+    return { rank: 'THREE_OF_A_KIND', multiplier: pokerPaytable.THREE_OF_A_KIND };
+  }
+  if (groups[0] === 2 && groups[1] === 2) {
+    return { rank: 'TWO_PAIR', multiplier: pokerPaytable.TWO_PAIR };
+  }
+  if (groups[0] === 2) {
+    const pairRank = Object.entries(counts).find(([, value]) => value === 2)?.[0];
+    if (pairRank && ['J', 'Q', 'K', 'A'].includes(pairRank)) {
+      return { rank: 'JACKS_OR_BETTER', multiplier: pokerPaytable.JACKS_OR_BETTER };
+    }
+  }
+  return { rank: 'HIGH_CARD', multiplier: pokerPaytable.HIGH_CARD };
 };
 
 const rouletteBetDefs = {
@@ -963,6 +1233,18 @@ async function seedDefaults() {
   );
 
   await Setting.findOneAndUpdate(
+    { key: 'poker_nonce_global' },
+    { key: 'poker_nonce_global', value: 0 },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+  );
+
+  await Setting.findOneAndUpdate(
+    { key: 'poker_server_seed' },
+    { key: 'poker_server_seed', value: crypto.randomBytes(32).toString('hex') },
+    { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
+  );
+
+  await Setting.findOneAndUpdate(
     { key: 'limbo_nonce_global' },
     { key: 'limbo_nonce_global', value: 0 },
     { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
@@ -1268,6 +1550,257 @@ app.get('/api/vip/summary', authRequired, async (req, res) => {
   });
 });
 
+app.get('/api/challenges/state', authRequired, async (req, res) => {
+  const [user, txRows] = await Promise.all([
+    User.findById(req.user._id).lean(),
+    Transaction.find({ userId: req.user._id, type: { $in: ['bet', 'payout'] } })
+      .sort({ createdAt: -1 })
+      .limit(5000)
+      .lean()
+  ]);
+
+  if (!user) {
+    return res.status(404).json({ message: 'user not found' });
+  }
+
+  const now = new Date();
+  const dailyStart = getPeriodStart('daily');
+  const weeklyStart = getPeriodStart('weekly');
+
+  const daily = createEmptyChallengeStats();
+  const weekly = createEmptyChallengeStats();
+  const event = createEmptyChallengeStats();
+
+  const attach = (bucket, row) => {
+    const game = String(row.game || 'unknown');
+    if (!bucket.games[game]) bucket.games[game] = { bets: 0, wins: 0 };
+    if (row.type === 'bet') {
+      bucket.wagered += Number(row.amount || 0);
+      bucket.betsCount += 1;
+      bucket.games[game].bets += 1;
+    }
+    if (row.type === 'payout') {
+      bucket.payoutsCount += 1;
+      bucket.games[game].wins += 1;
+    }
+  };
+
+  txRows.forEach((row) => {
+    const createdAt = new Date(row.createdAt);
+    if (createdAt >= dailyStart) attach(daily, row);
+    if (createdAt >= weeklyStart) attach(weekly, row);
+    attach(event, row);
+  });
+
+  daily.distinctGames = Object.keys(daily.games).filter((key) => daily.games[key].bets > 0).length;
+  weekly.distinctGames = Object.keys(weekly.games).filter((key) => weekly.games[key].bets > 0).length;
+  event.distinctGames = Object.keys(event.games).filter((key) => event.games[key].bets > 0).length;
+
+  const rows = buildChallengeRows(
+    {
+      daily,
+      weekly,
+      event
+    },
+    user.challengeClaims || []
+  );
+
+  res.json({
+    serverTime: now.toISOString(),
+    resetAt: {
+      daily: new Date(dailyStart.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      weekly: new Date(weeklyStart.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    },
+    stats: {
+      daily: {
+        wagered: Number(daily.wagered.toFixed(2)),
+        betsCount: daily.betsCount,
+        winsCount: daily.payoutsCount
+      },
+      weekly: {
+        wagered: Number(weekly.wagered.toFixed(2)),
+        betsCount: weekly.betsCount,
+        winsCount: weekly.payoutsCount,
+        distinctGames: weekly.distinctGames
+      }
+    },
+    challenges: rows
+  });
+});
+
+app.post('/api/challenges/claim', authRequired, async (req, res) => {
+  const challengeId = String(req.body?.challengeId || '').trim();
+  if (!challengeId) {
+    return res.status(400).json({ message: 'challengeId required' });
+  }
+
+  const user = await User.findById(req.user._id);
+  if (!user) {
+    return res.status(404).json({ message: 'user not found' });
+  }
+
+  if ((user.challengeClaims || []).some((claim) => claim.challengeId === challengeId)) {
+    return res.status(409).json({ message: 'Challenge already claimed' });
+  }
+
+  const [txRows] = await Promise.all([
+    Transaction.find({ userId: req.user._id, type: { $in: ['bet', 'payout'] } }).sort({ createdAt: -1 }).limit(5000).lean()
+  ]);
+
+  const dailyStart = getPeriodStart('daily');
+  const weeklyStart = getPeriodStart('weekly');
+  const daily = createEmptyChallengeStats();
+  const weekly = createEmptyChallengeStats();
+  const event = createEmptyChallengeStats();
+
+  const attach = (bucket, row) => {
+    const game = String(row.game || 'unknown');
+    if (!bucket.games[game]) bucket.games[game] = { bets: 0, wins: 0 };
+    if (row.type === 'bet') {
+      bucket.wagered += Number(row.amount || 0);
+      bucket.betsCount += 1;
+      bucket.games[game].bets += 1;
+    }
+    if (row.type === 'payout') bucket.games[game].wins += 1;
+  };
+
+  txRows.forEach((row) => {
+    const createdAt = new Date(row.createdAt);
+    if (createdAt >= dailyStart) attach(daily, row);
+    if (createdAt >= weeklyStart) attach(weekly, row);
+    attach(event, row);
+  });
+  daily.distinctGames = Object.keys(daily.games).filter((key) => daily.games[key].bets > 0).length;
+  weekly.distinctGames = Object.keys(weekly.games).filter((key) => weekly.games[key].bets > 0).length;
+  event.distinctGames = Object.keys(event.games).filter((key) => event.games[key].bets > 0).length;
+
+  const challenge = CHALLENGE_DEFINITIONS.find((row) => row.id === challengeId);
+  if (!challenge) {
+    return res.status(404).json({ message: 'Challenge not found' });
+  }
+
+  const sourceStats = challenge.type === 'daily' ? daily : challenge.type === 'weekly' ? weekly : event;
+  const progress = getChallengeMetricValue(challenge, sourceStats);
+  if (progress < challenge.target) {
+    return res.status(400).json({ message: 'Challenge not complete yet' });
+  }
+
+  const reward = Number(challenge.reward || 0);
+  const balanceBefore = Number(user.balance || 0);
+  user.balance = Number((balanceBefore + reward).toFixed(2));
+  user.challengeClaims = [...(user.challengeClaims || []), { challengeId, claimedAt: new Date() }];
+  await user.save();
+
+  await Transaction.create({
+    userId: user._id,
+    game: 'challenges',
+    type: 'challenge_reward',
+    amount: reward,
+    balanceBefore,
+    balanceAfter: user.balance,
+    meta: { challengeId }
+  });
+
+  await audit({
+    action: 'challenge.claim',
+    actor: user.username,
+    actorRole: user.role,
+    target: challengeId,
+    meta: { reward, progress, target: challenge.target }
+  });
+
+  res.json({
+    ok: true,
+    challengeId,
+    reward,
+    user: sanitizeUser(user)
+  });
+});
+
+app.get('/api/leaderboard', authRequired, async (req, res) => {
+  const period = String(req.query.period || 'daily').toLowerCase();
+  const category = String(req.query.category || 'total_winnings').toLowerCase();
+  const gameFilter = String(req.query.game || 'all').toLowerCase();
+  const search = String(req.query.search || '').trim().toLowerCase();
+  const startAt = getPeriodStart(period);
+
+  const filters = {
+    createdAt: { $gte: startAt }
+  };
+  if (gameFilter !== 'all') filters.game = gameFilter;
+
+  const txRows = await Transaction.find(filters).lean();
+  const userMap = new Map();
+
+  txRows.forEach((row) => {
+    const key = String(row.userId);
+    if (!userMap.has(key)) {
+      userMap.set(key, {
+        userId: key,
+        totalWinnings: 0,
+        biggestSingleWin: 0,
+        gamesPlayed: 0,
+        plinkoHigh: 0,
+        minesWins: 0
+      });
+    }
+    const entry = userMap.get(key);
+    if (row.type === 'bet') entry.gamesPlayed += 1;
+    if (row.type === 'payout') {
+      const value = Number(row.amount || 0);
+      entry.totalWinnings += value;
+      entry.biggestSingleWin = Math.max(entry.biggestSingleWin, value);
+      if (row.game === 'plinko') entry.plinkoHigh = Math.max(entry.plinkoHigh, value);
+      if (row.game === 'mines') entry.minesWins += 1;
+    }
+  });
+
+  const userIds = [...userMap.keys()].map((id) => new mongoose.Types.ObjectId(id));
+  const users = await User.find({ _id: { $in: userIds } }).select('username vipTier').lean();
+  const names = new Map(users.map((row) => [String(row._id), row]));
+
+  let rows = [...userMap.values()].map((entry) => ({
+    userId: entry.userId,
+    username: names.get(entry.userId)?.username || 'Unknown',
+    vipTier: names.get(entry.userId)?.vipTier || 'Bronze',
+    totalWinnings: Number(entry.totalWinnings.toFixed(2)),
+    biggestSingleWin: Number(entry.biggestSingleWin.toFixed(2)),
+    gamesPlayed: entry.gamesPlayed,
+    plinkoHigh: Number(entry.plinkoHigh.toFixed(2)),
+    minesWins: entry.minesWins
+  }));
+
+  if (search) {
+    rows = rows.filter((row) => row.username.toLowerCase().includes(search));
+  }
+
+  const scoreByCategory = {
+    total_winnings: (row) => row.totalWinnings,
+    biggest_single_win: (row) => row.biggestSingleWin,
+    most_games_played: (row) => row.gamesPlayed,
+    plinko_highs: (row) => row.plinkoHigh,
+    mines_streak: (row) => row.minesWins,
+    poker_wins: () => 0
+  };
+  const scoreFn = scoreByCategory[category] || scoreByCategory.total_winnings;
+  rows.sort((a, b) => scoreFn(b) - scoreFn(a));
+
+  const ranked = rows.slice(0, 200).map((row, index) => ({
+    rank: index + 1,
+    score: Number(scoreFn(row).toFixed(2)),
+    ...row
+  }));
+
+  const me = ranked.find((row) => row.userId === String(req.user._id)) || null;
+  res.json({
+    period,
+    category,
+    game: gameFilter,
+    rows: ranked,
+    me
+  });
+});
+
 app.get('/api/public/state', async (_req, res) => {
   const [promotions, games, globalMessages, siteSetting] = await Promise.all([
     Promotion.find().sort({ createdAt: -1 }).lean(),
@@ -1276,8 +1809,10 @@ app.get('/api/public/state', async (_req, res) => {
     Setting.findOne({ key: 'site_online' }).lean()
   ]);
 
+  const activePromotions = promotions.filter((promo) => isPromotionActive(promo));
+
   res.json({
-    promotions,
+    promotions: activePromotions,
     games,
     globalMessages,
     isSiteOnline: Boolean(siteSetting?.value)
@@ -1292,8 +1827,10 @@ app.get('/api/platform/state', authRequired, async (req, res) => {
     Setting.findOne({ key: 'site_online' }).lean()
   ]);
 
+  const activePromotions = promotions.filter((promo) => isPromotionActive(promo));
+
   const payload = {
-    promotions,
+    promotions: req.user.role === 'admin' || req.user.role === 'owner' ? promotions : activePromotions,
     games,
     globalMessages,
     isSiteOnline: Boolean(siteSetting?.value)
@@ -1407,18 +1944,75 @@ app.post('/api/chat/admin', authRequired, requireRole('admin', 'owner'), async (
 });
 
 app.post('/api/promotions', authRequired, requireRole('admin', 'owner'), async (req, res) => {
-  const { name, title, description, image, badge, cta, path, amount, uses } = req.body || {};
+  const {
+    name,
+    title,
+    description,
+    image,
+    badge,
+    cta,
+    path,
+    amount,
+    uses,
+    enabled,
+    startAt,
+    endAt,
+    audience,
+    rewardType,
+    rewardConfig,
+    placement,
+    promoCode,
+    notifyOnPublish
+  } = req.body || {};
   const normalizedName = String(name || title || '').trim();
   const normalizedTitle = String(title || name || '').trim();
   const normalizedDescription = String(description || '').trim();
   const normalizedAmount = Number(amount || 0);
   const normalizedUses = Math.max(0, Math.floor(Number(uses || 0)));
+  const normalizedStartAt = startAt ? new Date(startAt) : null;
+  const normalizedEndAt = endAt ? new Date(endAt) : null;
+  const normalizedAudience = ['all', 'vip', 'new_users', 'inactive_users'].includes(String(audience || 'all'))
+    ? String(audience)
+    : 'all';
+  const normalizedRewardType = [
+    'deposit_bonus',
+    'daily_boost',
+    'free_spins',
+    'cashback',
+    'challenge_boost',
+    'leaderboard_event',
+    'promo_code'
+  ].includes(String(rewardType || 'daily_boost'))
+    ? String(rewardType)
+    : 'daily_boost';
+  const normalizedPlacement = ['lobby', 'promotions', 'game', 'vip'].includes(String(placement || 'promotions'))
+    ? String(placement)
+    : 'promotions';
+  const normalizedPromoCode = String(promoCode || '')
+    .trim()
+    .toUpperCase()
+    .slice(0, 24);
 
   if (!normalizedName || !normalizedDescription) {
     return res.status(400).json({ message: 'name and description are required' });
   }
   if (!Number.isFinite(normalizedAmount) || normalizedAmount < 0) {
     return res.status(400).json({ message: 'amount must be a positive number' });
+  }
+  if (normalizedStartAt && Number.isNaN(normalizedStartAt.getTime())) {
+    return res.status(400).json({ message: 'invalid startAt date' });
+  }
+  if (normalizedEndAt && Number.isNaN(normalizedEndAt.getTime())) {
+    return res.status(400).json({ message: 'invalid endAt date' });
+  }
+  if (normalizedStartAt && normalizedEndAt && normalizedStartAt >= normalizedEndAt) {
+    return res.status(400).json({ message: 'startAt must be before endAt' });
+  }
+  if (normalizedPromoCode) {
+    const existingCode = await Promotion.findOne({ promoCode: normalizedPromoCode });
+    if (existingCode) {
+      return res.status(409).json({ message: 'promoCode already exists' });
+    }
   }
 
   const promotion = await Promotion.create({
@@ -1431,7 +2025,16 @@ app.post('/api/promotions', authRequired, requireRole('admin', 'owner'), async (
     path: path || '/promotions',
     amount: Number(normalizedAmount.toFixed(2)),
     uses: normalizedUses,
-    usesRemaining: normalizedUses
+    usesRemaining: normalizedUses,
+    enabled: enabled !== false,
+    startAt: normalizedStartAt,
+    endAt: normalizedEndAt,
+    audience: normalizedAudience,
+    rewardType: normalizedRewardType,
+    rewardConfig: rewardConfig && typeof rewardConfig === 'object' ? rewardConfig : {},
+    placement: normalizedPlacement,
+    promoCode: normalizedPromoCode,
+    notifyOnPublish: Boolean(notifyOnPublish)
   });
   await audit({
     action: 'promotion.create',
@@ -1441,7 +2044,122 @@ app.post('/api/promotions', authRequired, requireRole('admin', 'owner'), async (
     meta: { title: promotion.title }
   });
 
+  if (promotion.notifyOnPublish && isPromotionActive(promotion)) {
+    await Message.create({
+      channel: 'global',
+      user: 'DealerBot',
+      text: `New promotion live: ${promotion.title}. ${promotion.cta || 'Check promotions now.'}`
+    });
+  }
+
   res.status(201).json(promotion);
+});
+
+app.patch('/api/promotions/:id', authRequired, requireRole('admin', 'owner'), async (req, res) => {
+  const promo = await Promotion.findById(req.params.id);
+  if (!promo) {
+    return res.status(404).json({ message: 'promotion not found' });
+  }
+
+  const next = req.body || {};
+  const nextStartAt = next.startAt ? new Date(next.startAt) : null;
+  const nextEndAt = next.endAt ? new Date(next.endAt) : null;
+  if (next.startAt && Number.isNaN(nextStartAt.getTime())) {
+    return res.status(400).json({ message: 'invalid startAt date' });
+  }
+  if (next.endAt && Number.isNaN(nextEndAt.getTime())) {
+    return res.status(400).json({ message: 'invalid endAt date' });
+  }
+  if (nextStartAt && nextEndAt && nextStartAt >= nextEndAt) {
+    return res.status(400).json({ message: 'startAt must be before endAt' });
+  }
+
+  if (next.promoCode !== undefined) {
+    const code = String(next.promoCode || '')
+      .trim()
+      .toUpperCase()
+      .slice(0, 24);
+    if (code) {
+      const existingCode = await Promotion.findOne({ promoCode: code, _id: { $ne: promo._id } });
+      if (existingCode) {
+        return res.status(409).json({ message: 'promoCode already exists' });
+      }
+      promo.promoCode = code;
+    } else {
+      promo.promoCode = '';
+    }
+  }
+
+  if (next.name !== undefined) promo.name = String(next.name || '').trim() || promo.name;
+  if (next.title !== undefined) promo.title = String(next.title || '').trim() || promo.title;
+  if (next.description !== undefined) promo.description = String(next.description || '').trim() || promo.description;
+  if (next.image !== undefined) promo.image = String(next.image || '').trim() || '/site/promo-default.svg';
+  if (next.badge !== undefined) promo.badge = String(next.badge || '').trim() || 'New';
+  if (next.cta !== undefined) promo.cta = String(next.cta || '').trim() || 'Claim';
+  if (next.path !== undefined) promo.path = String(next.path || '').trim() || '/promotions';
+  if (next.enabled !== undefined) promo.enabled = Boolean(next.enabled);
+  if (next.startAt !== undefined) promo.startAt = nextStartAt;
+  if (next.endAt !== undefined) promo.endAt = nextEndAt;
+  if (next.audience !== undefined) {
+    promo.audience = ['all', 'vip', 'new_users', 'inactive_users'].includes(String(next.audience)) ? String(next.audience) : 'all';
+  }
+  if (next.rewardType !== undefined) {
+    promo.rewardType = [
+      'deposit_bonus',
+      'daily_boost',
+      'free_spins',
+      'cashback',
+      'challenge_boost',
+      'leaderboard_event',
+      'promo_code'
+    ].includes(String(next.rewardType))
+      ? String(next.rewardType)
+      : 'daily_boost';
+  }
+  if (next.rewardConfig !== undefined && next.rewardConfig && typeof next.rewardConfig === 'object') {
+    promo.rewardConfig = next.rewardConfig;
+  }
+  if (next.placement !== undefined) {
+    promo.placement = ['lobby', 'promotions', 'game', 'vip'].includes(String(next.placement))
+      ? String(next.placement)
+      : 'promotions';
+  }
+  if (next.notifyOnPublish !== undefined) promo.notifyOnPublish = Boolean(next.notifyOnPublish);
+
+  if (next.amount !== undefined) {
+    const parsed = Number(next.amount || 0);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return res.status(400).json({ message: 'amount must be a positive number' });
+    }
+    promo.amount = Number(parsed.toFixed(2));
+  }
+  if (next.uses !== undefined) {
+    const parsedUses = Math.max(0, Math.floor(Number(next.uses || 0)));
+    promo.uses = parsedUses;
+    if (promo.usesRemaining > parsedUses) promo.usesRemaining = parsedUses;
+  }
+  if (next.usesRemaining !== undefined) {
+    promo.usesRemaining = Math.max(0, Math.floor(Number(next.usesRemaining || 0)));
+  }
+
+  await promo.save();
+  await audit({
+    action: 'promotion.update',
+    actor: req.user.username,
+    actorRole: req.user.role,
+    target: String(promo._id),
+    meta: { title: promo.title }
+  });
+
+  if (promo.notifyOnPublish && isPromotionActive(promo)) {
+    await Message.create({
+      channel: 'global',
+      user: 'DealerBot',
+      text: `Promotion updated: ${promo.title}. ${promo.cta || 'Open promotions for details.'}`
+    });
+  }
+
+  res.json(promo);
 });
 
 app.patch('/api/users/:id/password', authRequired, requireRole('admin', 'owner'), async (req, res) => {
@@ -2177,6 +2895,36 @@ const rotateRouletteSeed = async () => {
   );
 };
 
+const getNextPokerNonce = async () => {
+  const setting = await Setting.findOneAndUpdate(
+    { key: 'poker_nonce_global' },
+    { $inc: { value: 1 } },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
+  );
+  return Number(setting.value || 1);
+};
+
+const getCurrentPokerSeed = async () => {
+  const setting = await Setting.findOne({ key: 'poker_server_seed' });
+  if (setting?.value) return String(setting.value);
+  const seed = crypto.randomBytes(32).toString('hex');
+  await Setting.findOneAndUpdate(
+    { key: 'poker_server_seed' },
+    { key: 'poker_server_seed', value: seed },
+    { returnDocument: 'after', upsert: true, setDefaultsOnInsert: true }
+  );
+  return seed;
+};
+
+const rotatePokerSeed = async () => {
+  const seed = crypto.randomBytes(32).toString('hex');
+  await Setting.findOneAndUpdate(
+    { key: 'poker_server_seed' },
+    { key: 'poker_server_seed', value: seed },
+    { returnDocument: 'after', upsert: true }
+  );
+};
+
 app.post('/api/roulette/spin', authRequired, async (req, res) => {
   const key = `${req.user._id}:roulette_spin`;
   if (!checkRouletteRateLimit(key, 20, 10_000)) {
@@ -2362,6 +3110,212 @@ app.get('/api/roulette/history', async (_req, res) => {
   });
 });
 
+app.post('/api/poker/deal', authRequired, async (req, res) => {
+  const betAmount = Number(req.body?.betAmount || 0);
+  const clientSeed = String(req.body?.clientSeed || `poker-client-${req.user._id}`).slice(0, 80);
+  if (!Number.isFinite(betAmount) || betAmount <= 0 || betAmount > 1_000_000) {
+    return res.status(400).json({ message: 'Invalid bet amount' });
+  }
+
+  const activeHand = await PokerHand.findOne({ userId: req.user._id, status: 'active' });
+  if (activeHand) {
+    return res.status(409).json({ message: 'Finish your active poker hand first' });
+  }
+
+  const nonce = await getNextPokerNonce();
+  const serverSeed = await getCurrentPokerSeed();
+  const serverSeedHash = hashSeed(serverSeed);
+  const shuffled = buildPokerShuffledDeck(serverSeed, clientSeed, nonce);
+  const initialHand = shuffled.slice(0, 5);
+  const deck = shuffled.slice(5);
+
+  let created = null;
+  let updatedUser = null;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const user = await User.findById(req.user._id).session(session);
+      if (!user || user.balance < betAmount) throw new Error('Insufficient balance');
+
+      const balanceBefore = Number(user.balance || 0);
+      user.balance = Number((balanceBefore - betAmount).toFixed(2));
+      user.totalWagered = Number((user.totalWagered + betAmount).toFixed(2));
+      await user.save({ session });
+      updatedUser = user;
+
+      created = await PokerHand.create(
+        [
+          {
+            userId: req.user._id,
+            betAmount,
+            status: 'active',
+            initialHand,
+            finalHand: [],
+            deck,
+            holds: [false, false, false, false, false],
+            handRank: '',
+            multiplier: 0,
+            payout: 0,
+            profit: Number((-betAmount).toFixed(2)),
+            serverSeedHash,
+            serverSeed,
+            clientSeed,
+            nonce
+          }
+        ],
+        { session }
+      );
+
+      await Transaction.create(
+        [
+          {
+            userId: req.user._id,
+            game: 'poker',
+            type: 'bet',
+            amount: betAmount,
+            balanceBefore,
+            balanceAfter: Number((balanceBefore - betAmount).toFixed(2)),
+            meta: { nonce }
+          }
+        ],
+        { session }
+      );
+    });
+  } catch (error) {
+    if (error.message === 'Insufficient balance') {
+      return res.status(400).json({ message: error.message });
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+
+  res.status(201).json({
+    handId: String(created[0]._id),
+    status: 'active',
+    betAmount,
+    hand: initialHand,
+    nonce,
+    hashedServerSeed: serverSeedHash,
+    clientSeed,
+    user: sanitizeUser(updatedUser),
+    paytable: pokerPaytable
+  });
+});
+
+app.post('/api/poker/draw', authRequired, async (req, res) => {
+  const handId = String(req.body?.handId || '').trim();
+  const holdsInput = Array.isArray(req.body?.holds) ? req.body.holds : [];
+  if (!handId) return res.status(400).json({ message: 'handId required' });
+  if (holdsInput.length !== 5) return res.status(400).json({ message: 'holds must be array of 5 booleans' });
+  const holds = holdsInput.map((value) => Boolean(value));
+
+  const hand = await PokerHand.findOne({ _id: handId, userId: req.user._id, status: 'active' });
+  if (!hand) {
+    return res.status(404).json({ message: 'Active hand not found' });
+  }
+
+  let deck = [...hand.deck];
+  const finalHand = [...hand.initialHand];
+  for (let i = 0; i < 5; i += 1) {
+    if (!holds[i]) {
+      const next = deck.shift();
+      if (!next) return res.status(500).json({ message: 'Deck exhausted unexpectedly' });
+      finalHand[i] = next;
+    }
+  }
+
+  const evaluated = evaluatePokerHand(finalHand);
+  const multiplier = Number(evaluated.multiplier || 0);
+  const payout = Number((Number(hand.betAmount || 0) * multiplier).toFixed(2));
+  const profit = Number((payout - Number(hand.betAmount || 0)).toFixed(2));
+
+  let updatedUser = null;
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const user = await User.findById(req.user._id).session(session);
+      if (!user) throw new Error('user not found');
+
+      const balanceBefore = Number(user.balance || 0);
+      user.balance = Number((balanceBefore + payout).toFixed(2));
+      if (payout > 0) {
+        user.totalWon = Number((user.totalWon + payout).toFixed(2));
+      }
+      await user.save({ session });
+      updatedUser = user;
+
+      hand.status = 'completed';
+      hand.holds = holds;
+      hand.finalHand = finalHand;
+      hand.deck = deck;
+      hand.handRank = evaluated.rank;
+      hand.multiplier = multiplier;
+      hand.payout = payout;
+      hand.profit = profit;
+      await hand.save({ session });
+
+      if (payout > 0) {
+        await Transaction.create(
+          [
+            {
+              userId: req.user._id,
+              game: 'poker',
+              type: 'payout',
+              amount: payout,
+              balanceBefore,
+              balanceAfter: Number((balanceBefore + payout).toFixed(2)),
+              meta: { handId: String(hand._id), handRank: evaluated.rank, multiplier }
+            }
+          ],
+          { session }
+        );
+      }
+    });
+  } finally {
+    await session.endSession();
+  }
+
+  await rotatePokerSeed();
+
+  res.json({
+    handId: String(hand._id),
+    status: hand.status,
+    initialHand: hand.initialHand,
+    finalHand,
+    holds,
+    handRank: evaluated.rank,
+    multiplier,
+    payout,
+    profit,
+    betAmount: Number(hand.betAmount || 0),
+    hashedServerSeed: hand.serverSeedHash,
+    nonce: Number(hand.nonce || 0),
+    user: sanitizeUser(updatedUser),
+    paytable: pokerPaytable
+  });
+});
+
+app.get('/api/poker/history', authRequired, async (req, res) => {
+  const rows = await PokerHand.find({ userId: req.user._id }).sort({ createdAt: -1 }).limit(50).lean();
+  res.json({
+    history: rows.map((row) => ({
+      id: String(row._id),
+      betAmount: Number(row.betAmount || 0),
+      status: row.status,
+      handRank: row.handRank || '',
+      multiplier: Number(row.multiplier || 0),
+      payout: Number(row.payout || 0),
+      profit: Number(row.profit || 0),
+      finalHand: row.finalHand?.length ? row.finalHand : row.initialHand,
+      nonce: Number(row.nonce || 0),
+      serverSeedHash: row.serverSeedHash,
+      clientSeed: row.clientSeed,
+      createdAt: row.createdAt
+    }))
+  });
+});
+
 app.post('/api/limbo/play', authRequired, async (req, res) => {
   const betAmount = Number(req.body?.betAmount || 0);
   const target = Number(req.body?.target || 2);
@@ -2438,14 +3392,16 @@ app.post('/api/limbo/play', authRequired, async (req, res) => {
 app.post('/api/plinko/drop', authRequired, async (req, res) => {
   const betAmount = Number(req.body?.betAmount || 0);
   const risk = String(req.body?.risk || 'medium').toLowerCase();
+  const rows = Number(req.body?.rows || 12);
   const clientSeed = String(req.body?.clientSeed || `plinko-client-${req.user._id}`).slice(0, 80);
   if (!Number.isFinite(betAmount) || betAmount <= 0) return res.status(400).json({ message: 'Invalid bet amount' });
-  if (!['low', 'medium', 'high'].includes(risk)) return res.status(400).json({ message: 'Invalid risk' });
+  if (!['low', 'medium', 'high', 'extreme'].includes(risk)) return res.status(400).json({ message: 'Invalid risk' });
+  if (!VALID_PLINKO_ROWS.includes(rows)) return res.status(400).json({ message: 'Invalid rows' });
 
   const nonce = await getNextGenericNonce('plinko_nonce_global');
   const serverSeed = await getCurrentGenericSeed('plinko_server_seed');
   const hashedServerSeed = hashSeed(serverSeed);
-  const outcome = buildPlinkoResult(serverSeed, clientSeed, nonce, risk);
+  const outcome = buildPlinkoResult(serverSeed, clientSeed, nonce, risk, rows);
   const payout = Number((betAmount * outcome.multiplier).toFixed(2));
   const profit = Number((payout - betAmount).toFixed(2));
 
@@ -2471,7 +3427,7 @@ app.post('/api/plinko/drop', authRequired, async (req, res) => {
             amount: betAmount,
             balanceBefore,
             balanceAfter: Number((balanceBefore - betAmount).toFixed(2)),
-            meta: { risk, nonce }
+            meta: { risk, rows, nonce }
           },
           {
             userId: req.user._id,
@@ -2480,7 +3436,7 @@ app.post('/api/plinko/drop', authRequired, async (req, res) => {
             amount: payout,
             balanceBefore: Number((balanceBefore - betAmount).toFixed(2)),
             balanceAfter: Number((balanceBefore - betAmount + payout).toFixed(2)),
-            meta: { risk, nonce, slot: outcome.slot, multiplier: outcome.multiplier }
+            meta: { risk, rows, nonce, slot: outcome.slot, multiplier: outcome.multiplier }
           }
         ],
         { session }
@@ -2739,6 +3695,7 @@ app.post('/api/towers/cashout', authRequired, async (req, res) => {
 const getSeedSettingKey = (game) => {
   if (game === 'dice') return 'dice_server_seed';
   if (game === 'roulette') return 'roulette_server_seed';
+  if (game === 'poker') return 'poker_server_seed';
   if (game === 'limbo') return 'limbo_server_seed';
   if (game === 'plinko') return 'plinko_server_seed';
   if (game === 'towers') return 'towers_server_seed';
@@ -2796,6 +3753,11 @@ app.post('/api/fairness/verify', authRequired, async (req, res) => {
   } else if (game === 'roulette') {
     const winningNumber = Math.floor(unit * 37);
     result = { winningNumber, color: getRouletteColor(winningNumber) };
+  } else if (game === 'poker') {
+    const deck = buildPokerShuffledDeck(serverSeed, clientSeed, nonce);
+    const hand = deck.slice(0, 5);
+    const evaluated = evaluatePokerHand(hand);
+    result = { hand, handRank: evaluated.rank, multiplier: evaluated.multiplier };
   } else if (game === 'crash') {
     result = { crashPoint: buildCrashPoint(serverSeed, clientSeed, nonce) };
   } else if (game === 'mines') {
@@ -2818,7 +3780,8 @@ app.post('/api/fairness/verify', authRequired, async (req, res) => {
     result = { resultMultiplier: buildLimboResult(serverSeed, clientSeed, nonce) };
   } else if (game === 'plinko') {
     const risk = String(req.body?.risk || 'medium').toLowerCase();
-    result = buildPlinkoResult(serverSeed, clientSeed, nonce, risk);
+    const rows = Number(req.body?.rows || 12);
+    result = buildPlinkoResult(serverSeed, clientSeed, nonce, risk, rows);
   } else if (game === 'towers') {
     result = { mineColumns: buildTowersMines(serverSeed, clientSeed, nonce) };
   } else {

@@ -130,6 +130,10 @@ export const api = {
     return request('/promotions', { method: 'POST', token, body: promo });
   },
 
+  updatePromotion(token, promotionId, payload) {
+    return request(`/promotions/${promotionId}`, { method: 'PATCH', token, body: payload });
+  },
+
   setUserPassword(token, userId, password) {
     return request(`/users/${userId}/password`, {
       method: 'PATCH',
@@ -237,6 +241,26 @@ export const api = {
     return request('/roulette/history');
   },
 
+  pokerDeal(token, payload) {
+    return request('/poker/deal', {
+      method: 'POST',
+      token,
+      body: payload
+    });
+  },
+
+  pokerDraw(token, payload) {
+    return request('/poker/draw', {
+      method: 'POST',
+      token,
+      body: payload
+    });
+  },
+
+  getPokerHistory(token) {
+    return request('/poker/history', { token });
+  },
+
   playLimbo(token, payload) {
     return request('/limbo/play', {
       method: 'POST',
@@ -299,5 +323,26 @@ export const api = {
 
   getFairnessHistory(token, game) {
     return request(`/fairness/history${game ? `?game=${encodeURIComponent(game)}` : ''}`, { token });
+  },
+
+  getChallengesState(token) {
+    return request('/challenges/state', { token });
+  },
+
+  claimChallenge(token, challengeId) {
+    return request('/challenges/claim', {
+      method: 'POST',
+      token,
+      body: { challengeId }
+    });
+  },
+
+  getLeaderboard(token, params = {}) {
+    const query = new URLSearchParams();
+    if (params.period) query.set('period', params.period);
+    if (params.category) query.set('category', params.category);
+    if (params.game) query.set('game', params.game);
+    if (params.search) query.set('search', params.search);
+    return request(`/leaderboard${query.toString() ? `?${query.toString()}` : ''}`, { token });
   }
 };

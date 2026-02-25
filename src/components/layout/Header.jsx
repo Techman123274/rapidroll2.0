@@ -2,9 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import Button from '../ui/Button';
 import { useAuth } from '../../context/AuthContext';
+import { useSound } from '../../context/SoundContext';
+import NotificationCenter from './NotificationCenter';
 
 function Header() {
   const { user, logout, isLoading, isDailyAvailable } = useAuth();
+  const { muted, toggleMute, unlockAudio } = useSound();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const profileRef = useRef(null);
 
@@ -48,6 +51,18 @@ function Header() {
 
         {/* AUTH ACTIONS */}
         <div className="header-actions">
+          <NotificationCenter />
+          <button
+            type="button"
+            className="sound-toggle-btn"
+            aria-label={muted ? 'Unmute sounds' : 'Mute sounds'}
+            onClick={() => {
+              unlockAudio();
+              toggleMute();
+            }}
+          >
+            {muted ? 'Sound Off' : 'Sound On'}
+          </button>
           {user ? (
             <>
               <Button as="link" to="/daily" variant={isDailyAvailable ? 'primary' : 'outline'}>

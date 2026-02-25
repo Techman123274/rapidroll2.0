@@ -38,6 +38,7 @@ export const implementedGameSlugs = new Set([
   'roulette-pro',
   'blackjack-live',
   'blackvault-blackjack',
+  'poker-arena',
   'mole-digger-slots',
   'rise-of-olympus-1000',
   'fangs-and-fire',
