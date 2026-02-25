@@ -48,10 +48,10 @@ export function AdminProvider({ children }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, user?.id]);
 
-  const sendGlobalMessage = async (username, text) => {
+  const sendGlobalMessage = async (username, text, guestId = null) => {
     const value = String(text || '').trim();
     if (!value) return;
-    const message = await api.sendGlobalMessage(token, username, value);
+    const message = await api.sendGlobalMessage(token, username, value, guestId);
     setGlobalMessages((prev) => [...prev, message]);
   };
 

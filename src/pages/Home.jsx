@@ -10,21 +10,21 @@ const promotions = [
   {
     title: 'Welcome Offer',
     description: 'Claim your first reward pack when you register.',
-    image: 'https://picsum.photos/seed/promo-welcome/640/360',
+    image: '/site/promo-welcome.svg',
     ctaPath: '/wallet',
     ctaLabel: 'Open Wallet'
   },
   {
     title: 'Weekly Cashback',
     description: 'Get a percentage of your weekly play back as credits.',
-    image: 'https://picsum.photos/seed/promo-cashback/640/360',
+    image: '/site/promo-cashback.svg',
     ctaPath: '/daily',
     ctaLabel: 'Claim Daily'
   },
   {
     title: 'Leaderboard Race',
     description: 'Compete in weekly rankings and unlock prize pools.',
-    image: 'https://picsum.photos/seed/promo-leaderboard/640/360',
+    image: '/site/promo-leaderboard.svg',
     ctaPath: '/vip',
     ctaLabel: 'Enter VIP'
   }
@@ -68,7 +68,7 @@ function Home() {
         <div className="hero-media-wrap">
           <img
             className="hero-media"
-            src="https://picsum.photos/seed/rapid-hero/900/560"
+            src="/site/rapid-hero.svg"
             alt="Rapid Rolls lobby preview"
           />
         </div>

@@ -129,7 +129,8 @@ const messageSchema = new mongoose.Schema(
   {
     channel: { type: String, enum: ['global', 'admin'], required: true },
     user: { type: String, required: true },
-    text: { type: String, required: true }
+    text: { type: String, required: true },
+    guestId: { type: String, default: null, index: true }
   },
   { timestamps: true }
 );
@@ -860,7 +861,7 @@ async function seedDefaults() {
       {
         title: 'Weekly Rakeback',
         description: 'Automatic weekly cashback based on your activity.',
-        image: 'https://picsum.photos/seed/promo-rakeback/640/360',
+        image: '/site/promo-rakeback.svg',
         path: '/wallet',
         cta: 'Claim Cashback',
         badge: 'Cashback'
@@ -868,7 +869,7 @@ async function seedDefaults() {
       {
         title: 'Reload Bonus',
         description: 'Boost your next deposit with a limited-time reload.',
-        image: 'https://picsum.photos/seed/promo-reload/640/360',
+        image: '/site/promo-reload.svg',
         path: '/wallet',
         cta: 'Deposit Now',
         badge: 'Reload'
@@ -876,13 +877,18 @@ async function seedDefaults() {
       {
         title: 'Race Leaderboard',
         description: 'Earn points from every wager and climb the weekly rankings.',
-        image: 'https://picsum.photos/seed/promo-race-3/640/360',
+        image: '/site/promo-race.svg',
         path: '/vip',
         cta: 'Join Race',
         badge: 'Competitive'
       }
     ]);
   }
+
+  await Promotion.updateMany(
+    { image: { $regex: '^https://picsum\\.photos/', $options: 'i' } },
+    { $set: { image: '/site/promo-default.svg' } }
+  );
 
   const messageCount = await Message.countDocuments({ channel: 'global' });
   if (messageCount === 0) {
@@ -1329,15 +1335,18 @@ app.post('/api/chat/global', authRequired, async (req, res) => {
 
 app.post('/api/chat/global/public', async (req, res) => {
   const user = String(req.body?.user || 'Guest').trim();
+  const guestIdRaw = String(req.body?.guestId || '').trim();
+  const guestId = guestIdRaw.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32);
   const text = String(req.body?.text || '').trim();
   if (!text) {
     return res.status(400).json({ message: 'text is required' });
   }
 
-  const message = await Message.create({ channel: 'global', user, text });
+  const safeUser = user.slice(0, 32) || (guestId ? `Guest-${guestId.slice(0, 4).toUpperCase()}` : 'Guest');
+  const message = await Message.create({ channel: 'global', user: safeUser, text, guestId: guestId || null });
   await audit({
     action: 'chat.global.send_public',
-    actor: user,
+    actor: safeUser,
     actorRole: 'guest',
     target: String(message._id)
   });
@@ -1416,7 +1425,7 @@ app.post('/api/promotions', authRequired, requireRole('admin', 'owner'), async (
     name: normalizedName,
     title: normalizedTitle,
     description: normalizedDescription,
-    image: image || `https://picsum.photos/seed/promo-${Date.now()}/640/360`,
+    image: image || '/site/promo-default.svg',
     badge: badge || 'New',
     cta: cta || 'Claim',
     path: path || '/promotions',

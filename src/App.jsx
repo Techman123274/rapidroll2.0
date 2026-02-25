@@ -1,6 +1,7 @@
 import Header from './components/layout/Header';
 import Footer from './components/layout/Footer';
 import Sidebar from './components/layout/Sidebar';
+import MobileDock from './components/layout/MobileDock';
 import SiteNotifications from './components/layout/SiteNotifications';
 import AppRoutes from './routes';
 
@@ -21,6 +22,7 @@ function App() {
 
       {/* FOOTER */}
       <Footer />
+      <MobileDock />
     </div>
   );
 }

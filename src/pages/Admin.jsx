@@ -52,7 +52,7 @@ function Admin() {
       title: promoForm.title || promoForm.name,
       amount: Number(promoForm.amount || 0),
       uses: Number(promoForm.uses || 0),
-      image: promoForm.image || `https://picsum.photos/seed/admin-promo-${Date.now()}/640/360`
+      image: promoForm.image || '/site/promo-default.svg'
     });
 
     setPromoForm({

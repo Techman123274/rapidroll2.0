@@ -29,7 +29,7 @@ function Promotions() {
         </div>
         <img
           className="promo-featured-media"
-          src="https://picsum.photos/seed/promotions-featured/900/520"
+          src="/site/promotions-featured.svg"
           alt="Featured promotions"
           loading="lazy"
         />

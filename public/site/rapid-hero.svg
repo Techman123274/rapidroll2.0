@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1280" y2="720" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0d1425"/>
+      <stop offset="1" stop-color="#1a2a47"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect x="26" y="26" width="1228" height="668" rx="28" fill="rgba(0,0,0,0.24)" stroke="#3f5684"/>
+  <circle cx="1088" cy="142" r="82" fill="#00e701" fill-opacity="0.14"/>
+  <circle cx="1148" cy="212" r="34" fill="#00e701" fill-opacity="0.20"/>
+  <text x="74" y="118" fill="#8fb2ff" font-family="Segoe UI, Arial, sans-serif" font-size="34" font-weight="700">RAPID ROLLS 2.0</text>
+  <text x="74" y="372" fill="#eef4ff" font-family="Segoe UI, Arial, sans-serif" font-size="82" font-weight="800">Play Smarter</text>
+  <text x="74" y="432" fill="#9fb0d1" font-family="Segoe UI, Arial, sans-serif" font-size="30">Fast games, clean controls, and better flow</text>
+</svg>

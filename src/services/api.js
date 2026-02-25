@@ -91,11 +91,11 @@ export const api = {
     return request('/platform/state', { token });
   },
 
-  sendGlobalMessage(token, username, text) {
+  sendGlobalMessage(token, username, text, guestId) {
     if (!token) {
       return request('/chat/global/public', {
         method: 'POST',
-        body: { user: username || 'Guest', text }
+        body: { user: username || 'Guest', text, guestId }
       });
     }
 
